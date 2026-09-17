@@ -110,38 +110,47 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text('Good morning, Maya', style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 8),
-            Text(
-              'Your rehabilitation session is ready.',
-              style: theme.textTheme.bodyLarge,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Text(
+                  'Good morning, Maya',
+                  style: theme.textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Your rehabilitation session is ready.',
+                  style: theme.textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 24),
+                _OverallCard(theme: theme),
+                const SizedBox(height: 24),
+                Text('Session overview', style: theme.textTheme.titleLarge),
+                const SizedBox(height: 12),
+                ...exercises.map(
+                  (exercise) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _ExerciseCard(exercise: exercise),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                FilledButton.icon(
+                  onPressed: () => _showMockFeedback(
+                    'Session continuation is coming in the next mock iteration.',
+                  ),
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Continue session'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(52),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 24),
-            _OverallCard(theme: theme),
-            const SizedBox(height: 24),
-            Text('Session overview', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 12),
-            ...exercises.map(
-              (exercise) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _ExerciseCard(exercise: exercise),
-              ),
-            ),
-            const SizedBox(height: 4),
-            FilledButton.icon(
-              onPressed: () => _showMockFeedback(
-                'Session continuation is coming in the next mock iteration.',
-              ),
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Continue session'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
