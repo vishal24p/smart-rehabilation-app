@@ -240,3 +240,40 @@ git commit -m "fix: align dashboard semantics and navigation"
 ### Concerns
 
 - None.
+
+## Premium Redesign Review Fix
+
+### Status
+
+Resolved navigation contrast and semantics-value coverage findings.
+
+### Files
+
+- Modified: `lib/main.dart`
+  - Centralized navigation colors in `NavigationBarThemeData`.
+  - Selected icon and label use ink with the mint indicator; unselected icon and label use cloud and muted colors.
+- Modified: `test/widget_test.dart`
+  - Added selected/unselected navigation theme assertions.
+  - Added exact semantics-value assertions for overall (`78%`), knee-extension (`80%`), and sit-to-stand (`75%`) progress.
+
+### Verification
+
+```text
+dart format lib/main.dart test/widget_test.dart
+Formatted 2 files (0 changed) in 0.03 seconds.
+
+flutter analyze
+Analyzing smart-rehabilation-app...
+No issues found! (ran in 3.1s)
+
+flutter test
+00:00 +0: loading C:/Users/visha/smart-rehabilation-app/test/widget_test.dart
+00:01 +1: All tests passed!
+
+git diff --check
+exit 0; no output
+```
+
+### Concerns
+
+- Flutter reports seven newer transitive packages incompatible with current constraints; no package change was requested.

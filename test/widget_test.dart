@@ -13,26 +13,37 @@ void main() {
     expect(find.text('Session overview'), findsOneWidget);
     expect(find.textContaining('28 / 36'), findsOneWidget);
     expect(find.text('78%'), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp('Overall progress')), findsOneWidget);
+    final overallProgress = find.bySemanticsLabel(RegExp('Overall progress'));
+    expect(overallProgress, findsOneWidget);
+    expect(tester.getSemantics(overallProgress).value, '78%');
+
+    final navigationTheme = Theme.of(
+      tester.element(find.byType(HomeScreen)),
+    ).navigationBarTheme;
+    const selected = <WidgetState>{WidgetState.selected};
+    expect(navigationTheme.indicatorColor, mint);
+    expect(navigationTheme.iconTheme?.resolve(selected)?.color, ink);
+    expect(navigationTheme.iconTheme?.resolve({})?.color, cloud);
+    expect(navigationTheme.labelTextStyle?.resolve(selected)?.color, ink);
+    expect(navigationTheme.labelTextStyle?.resolve({})?.color, muted);
+
     await tester.scrollUntilVisible(find.text('Seated Knee Extension'), 200);
     expect(find.text('Seated Knee Extension'), findsOneWidget);
     expect(find.text('16 / 20 correct'), findsOneWidget);
-    expect(
-      find.bySemanticsLabel(
-        'Seated Knee Extension: 16 of 20 correct repetitions',
-      ),
-      findsOneWidget,
+    final kneeProgress = find.bySemanticsLabel(
+      'Seated Knee Extension: 16 of 20 correct repetitions',
     );
+    expect(kneeProgress, findsOneWidget);
+    expect(tester.getSemantics(kneeProgress).value, '80%');
 
     await tester.scrollUntilVisible(find.text('12 / 16 correct'), 200);
     expect(find.text('Supported Sit to Stand'), findsOneWidget);
     expect(find.text('12 / 16 correct'), findsOneWidget);
-    expect(
-      find.bySemanticsLabel(
-        'Supported Sit to Stand: 12 of 16 correct repetitions',
-      ),
-      findsOneWidget,
+    final standProgress = find.bySemanticsLabel(
+      'Supported Sit to Stand: 12 of 16 correct repetitions',
     );
+    expect(standProgress, findsOneWidget);
+    expect(tester.getSemantics(standProgress).value, '75%');
 
     final continueButton = find.widgetWithText(
       FilledButton,

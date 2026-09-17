@@ -68,6 +68,21 @@ class MyApp extends StatelessWidget {
       colorScheme: rehabColorScheme,
       useMaterial3: true,
       scaffoldBackgroundColor: ink,
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: inkSurface,
+        indicatorColor: mint,
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            color: states.contains(WidgetState.selected) ? ink : cloud,
+          ),
+        ),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            color: states.contains(WidgetState.selected) ? ink : muted,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
       snackBarTheme: const SnackBarThemeData(
         backgroundColor: cloud,
         contentTextStyle: TextStyle(color: ink, fontWeight: FontWeight.w600),
@@ -111,8 +126,6 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: NavigationBar(
-            backgroundColor: inkSurface,
-            indicatorColor: mint,
             selectedIndex: _selectedIndex,
             onDestinationSelected: _selectDestination,
             destinations: const [
