@@ -1,7 +1,24 @@
 import 'package:flutter/material.dart';
 
+const white = Color(0xFFFFFFFF);
+const paleMint = Color(0xFFE8F5F1);
+const charcoal = Color(0xFF1B1B1F);
 const teal = Color(0xFF00796B);
 const lavender = Color(0xFF6750A4);
+
+const rehabColorScheme = ColorScheme.light(
+  primary: teal,
+  onPrimary: white,
+  primaryContainer: paleMint,
+  onPrimaryContainer: charcoal,
+  secondary: lavender,
+  onSecondary: white,
+  secondaryContainer: paleMint,
+  onSecondaryContainer: charcoal,
+  surface: white,
+  onSurface: charcoal,
+  surfaceContainer: paleMint,
+);
 
 const exercises = <Exercise>[
   Exercise(
@@ -44,10 +61,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     title: 'Rehab monitor',
-    theme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: teal),
-      useMaterial3: true,
-    ),
+    theme: ThemeData(colorScheme: rehabColorScheme, useMaterial3: true),
     home: const HomeScreen(),
   );
 }
@@ -62,15 +76,17 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
+  void _showMockFeedback(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.removeCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _selectDestination(int index) {
     setState(() => _selectedIndex = index);
     if (index != 0) {
       final section = index == 1 ? 'Progress' : 'Profile';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('$section is coming in the next mock iteration.'),
-        ),
-      );
+      _showMockFeedback('$section is coming in the next mock iteration.');
     }
   }
 
@@ -116,7 +132,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 4),
             FilledButton.icon(
-              onPressed: () {},
+              onPressed: () => _showMockFeedback(
+                'Session continuation is coming in the next mock iteration.',
+              ),
               icon: const Icon(Icons.play_arrow),
               label: const Text('Continue session'),
               style: FilledButton.styleFrom(
@@ -165,7 +183,7 @@ class _OverallCard extends StatelessWidget {
             children: [
               Icon(Icons.schedule_outlined, size: 20),
               SizedBox(width: 8),
-              Text('2 exercises · About 12 minutes'),
+              Expanded(child: Text('2 exercises · About 12 minutes')),
             ],
           ),
         ],
@@ -188,6 +206,7 @@ class _ExerciseCard extends StatelessWidget {
         side: BorderSide(color: exercise.accent.withValues(alpha: .25)),
       ),
       child: Semantics(
+        container: true,
         label:
             '${exercise.name}, ${exercise.correct} of ${exercise.total} correct repetitions',
         child: Padding(
