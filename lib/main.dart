@@ -155,6 +155,10 @@ class _OverallCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     elevation: 1,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12),
+      side: BorderSide(color: teal.withValues(alpha: .25)),
+    ),
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -205,42 +209,40 @@ class _ExerciseCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(color: exercise.accent.withValues(alpha: .25)),
       ),
-      child: Semantics(
-        container: true,
-        label:
-            '${exercise.name}, ${exercise.correct} of ${exercise.total} correct repetitions',
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.accessibility_new, color: exercise.accent),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      exercise.name,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.accessibility_new, color: exercise.accent),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    exercise.name,
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(exercise.detail),
-              const SizedBox(height: 16),
-              Text('${exercise.correct} / ${exercise.total} correct'),
-              const SizedBox(height: 8),
-              Semantics(
-                label:
-                    '${exercise.name} progress: ${exercise.correct} of ${exercise.total}',
-                child: LinearProgressIndicator(
-                  value: progress,
-                  color: exercise.accent,
                 ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(exercise.detail),
+            const SizedBox(height: 16),
+            Text('${exercise.correct} / ${exercise.total} correct'),
+            const SizedBox(height: 8),
+            Semantics(
+              container: true,
+              explicitChildNodes: true,
+              child: LinearProgressIndicator(
+                value: progress,
+                color: exercise.accent,
+                semanticsLabel:
+                    '${exercise.name}: ${exercise.correct} of ${exercise.total} correct repetitions',
+                semanticsValue: '${(progress * 100).round()}%',
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

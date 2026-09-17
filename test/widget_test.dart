@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_monitor/main.dart';
 
@@ -15,7 +16,7 @@ void main() {
     expect(find.text('78%'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
-        RegExp(r'^Seated Knee Extension, 16 of 20 correct repetitions'),
+        'Seated Knee Extension: 16 of 20 correct repetitions',
       ),
       findsOneWidget,
     );
@@ -24,8 +25,21 @@ void main() {
     expect(find.text('12 / 16 correct'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
-        RegExp(r'^Supported Sit to Stand, 12 of 16 correct repetitions'),
+        'Supported Sit to Stand: 12 of 16 correct repetitions',
       ),
+      findsOneWidget,
+    );
+
+    final continueButton = find.widgetWithText(
+      FilledButton,
+      'Continue session',
+    );
+    await tester.scrollUntilVisible(continueButton, 200);
+    await tester.tap(continueButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Session continuation is coming in the next mock iteration.'),
       findsOneWidget,
     );
 
