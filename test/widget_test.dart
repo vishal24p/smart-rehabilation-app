@@ -14,6 +14,7 @@ void main() {
     expect(find.text('16 / 20 correct'), findsOneWidget);
     expect(find.textContaining('28 / 36'), findsOneWidget);
     expect(find.text('78%'), findsOneWidget);
+    expect(find.bySemanticsLabel('Overall progress'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
         'Seated Knee Extension: 16 of 20 correct repetitions',

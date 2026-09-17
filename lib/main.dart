@@ -94,20 +94,30 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _selectDestination,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
-          NavigationDestination(
-            icon: Icon(Icons.insights_outlined),
-            label: 'Progress',
+      bottomNavigationBar: Align(
+        alignment: Alignment.bottomCenter,
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: NavigationBar(
+            selectedIndex: _selectedIndex,
+            onDestinationSelected: _selectDestination,
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                label: 'Home',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.insights_outlined),
+                label: 'Progress',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                label: 'Profile',
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            label: 'Profile',
-          ),
-        ],
+        ),
       ),
       body: SafeArea(
         child: Align(
@@ -164,6 +174,7 @@ class _OverallCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     elevation: 1,
+    semanticContainer: false,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
       side: BorderSide(color: teal.withValues(alpha: .25)),
@@ -183,14 +194,15 @@ class _OverallCard extends StatelessWidget {
                   style: theme.textTheme.headlineSmall,
                 ),
               ),
-              Semantics(
-                label: 'Overall progress: 78 percent',
-                child: Text('78%', style: theme.textTheme.displaySmall),
-              ),
+              Text('78%', style: theme.textTheme.displaySmall),
             ],
           ),
           const SizedBox(height: 16),
-          const LinearProgressIndicator(value: 28 / 36),
+          const LinearProgressIndicator(
+            value: 28 / 36,
+            semanticsLabel: 'Overall progress',
+            semanticsValue: '78%',
+          ),
           const SizedBox(height: 16),
           const Row(
             children: [
@@ -214,6 +226,7 @@ class _ExerciseCard extends StatelessWidget {
     final progress = exercise.correct / exercise.total;
     return Card(
       elevation: 1,
+      semanticContainer: false,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(color: exercise.accent.withValues(alpha: .25)),
@@ -240,16 +253,12 @@ class _ExerciseCard extends StatelessWidget {
             const SizedBox(height: 16),
             Text('${exercise.correct} / ${exercise.total} correct'),
             const SizedBox(height: 8),
-            Semantics(
-              container: true,
-              explicitChildNodes: true,
-              child: LinearProgressIndicator(
-                value: progress,
-                color: exercise.accent,
-                semanticsLabel:
-                    '${exercise.name}: ${exercise.correct} of ${exercise.total} correct repetitions',
-                semanticsValue: '${(progress * 100).round()}%',
-              ),
+            LinearProgressIndicator(
+              value: progress,
+              color: exercise.accent,
+              semanticsLabel:
+                  '${exercise.name}: ${exercise.correct} of ${exercise.total} correct repetitions',
+              semanticsValue: '${(progress * 100).round()}%',
             ),
           ],
         ),
