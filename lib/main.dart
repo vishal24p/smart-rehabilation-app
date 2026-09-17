@@ -1,23 +1,26 @@
 import 'package:flutter/material.dart';
 
-const white = Color(0xFFFFFFFF);
-const paleMint = Color(0xFFE8F5F1);
-const charcoal = Color(0xFF1B1B1F);
-const teal = Color(0xFF00796B);
-const lavender = Color(0xFF6750A4);
+const ink = Color(0xFF101514);
+const inkSurface = Color(0xFF19201E);
+const inkRaised = Color(0xFF222B28);
+const cloud = Color(0xFFF5F7F2);
+const muted = Color(0xFFB5C0B9);
+const lime = Color(0xFFD9FF4A);
+const mint = Color(0xFF72F6C3);
 
-const rehabColorScheme = ColorScheme.light(
-  primary: teal,
-  onPrimary: white,
-  primaryContainer: paleMint,
-  onPrimaryContainer: charcoal,
-  secondary: lavender,
-  onSecondary: white,
-  secondaryContainer: paleMint,
-  onSecondaryContainer: charcoal,
-  surface: white,
-  onSurface: charcoal,
-  surfaceContainer: paleMint,
+const rehabColorScheme = ColorScheme.dark(
+  primary: lime,
+  onPrimary: ink,
+  primaryContainer: inkRaised,
+  onPrimaryContainer: cloud,
+  secondary: mint,
+  onSecondary: ink,
+  secondaryContainer: inkRaised,
+  onSecondaryContainer: cloud,
+  surface: ink,
+  onSurface: cloud,
+  surfaceContainer: inkSurface,
+  outline: Color(0xFF43504A),
 );
 
 const exercises = <Exercise>[
@@ -26,14 +29,14 @@ const exercises = <Exercise>[
     detail: 'Strength · 2 sets',
     correct: 16,
     total: 20,
-    accent: teal,
+    accent: mint,
   ),
   Exercise(
     name: 'Supported Sit to Stand',
     detail: 'Mobility · 2 sets',
     correct: 12,
     total: 16,
-    accent: lavender,
+    accent: lime,
   ),
 ];
 
@@ -61,7 +64,15 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     title: 'Rehab monitor',
-    theme: ThemeData(colorScheme: rehabColorScheme, useMaterial3: true),
+    theme: ThemeData(
+      colorScheme: rehabColorScheme,
+      useMaterial3: true,
+      scaffoldBackgroundColor: ink,
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: cloud,
+        contentTextStyle: TextStyle(color: ink, fontWeight: FontWeight.w600),
+      ),
+    ),
     home: const HomeScreen(),
   );
 }
@@ -100,6 +111,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: NavigationBar(
+            backgroundColor: inkSurface,
+            indicatorColor: mint,
             selectedIndex: _selectedIndex,
             onDestinationSelected: _selectDestination,
             destinations: const [
@@ -125,21 +138,37 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
               children: [
+                const _Capsule(
+                  icon: Icons.wb_sunny_outlined,
+                  label: 'Today’s session',
+                ),
+                const SizedBox(height: 16),
                 Text(
                   'Good morning, Maya',
-                  style: theme.textTheme.headlineSmall,
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    color: cloud,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1.1,
+                  ),
                 ),
-                const SizedBox(height: 8),
-                Text(
+                const SizedBox(height: 6),
+                const Text(
                   'Your rehabilitation session is ready.',
-                  style: theme.textTheme.bodyLarge,
+                  style: TextStyle(color: muted, fontSize: 16, height: 1.4),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 28),
                 _OverallCard(theme: theme),
-                const SizedBox(height: 24),
-                Text('Session overview', style: theme.textTheme.titleLarge),
+                const SizedBox(height: 32),
+                Text(
+                  'Session overview',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: cloud,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -.4,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 ...exercises.map(
                   (exercise) => Padding(
@@ -147,15 +176,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: _ExerciseCard(exercise: exercise),
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: () => _showMockFeedback(
                     'Session continuation is coming in the next mock iteration.',
                   ),
-                  icon: const Icon(Icons.play_arrow),
+                  icon: const Icon(Icons.play_arrow_rounded),
                   label: const Text('Continue session'),
                   style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(52),
+                    backgroundColor: lime,
+                    foregroundColor: ink,
+                    minimumSize: const Size.fromHeight(56),
+                    shape: const StadiumBorder(),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
               ],
@@ -172,44 +205,73 @@ class _OverallCard extends StatelessWidget {
   final ThemeData theme;
 
   @override
-  Widget build(BuildContext context) => Card(
-    elevation: 1,
-    semanticContainer: false,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(12),
-      side: BorderSide(color: teal.withValues(alpha: .25)),
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(28),
+      border: Border.all(color: const Color(0xFF465A45)),
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF263A2C), inkSurface, Color(0xFF151B19)],
+      ),
     ),
     child: Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Today’s progress', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 16),
+          const _Capsule(icon: Icons.bolt_outlined, label: 'Today’s progress'),
+          const SizedBox(height: 28),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
                 child: Text(
-                  '28 / 36\ncorrect repetitions',
-                  style: theme.textTheme.headlineSmall,
+                  '28 / 36',
+                  style: theme.textTheme.displaySmall?.copyWith(
+                    color: cloud,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1.5,
+                  ),
                 ),
               ),
-              Text('78%', style: theme.textTheme.displaySmall),
+              ShaderMask(
+                blendMode: BlendMode.srcIn,
+                shaderCallback: (bounds) => const LinearGradient(
+                  colors: [lime, mint],
+                ).createShader(bounds),
+                child: Text(
+                  '78%',
+                  style: theme.textTheme.displaySmall?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1.5,
+                  ),
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 16),
-          const LinearProgressIndicator(
-            value: 28 / 36,
-            semanticsLabel: 'Overall progress',
-            semanticsValue: '78%',
+          const SizedBox(height: 4),
+          const Text(
+            'correct repetitions',
+            style: TextStyle(color: muted, fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: 16),
-          const Row(
-            children: [
-              Icon(Icons.schedule_outlined, size: 20),
-              SizedBox(width: 8),
-              Expanded(child: Text('2 exercises · About 12 minutes')),
-            ],
+          const SizedBox(height: 20),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: const LinearProgressIndicator(
+              value: 28 / 36,
+              minHeight: 10,
+              color: lime,
+              backgroundColor: ink,
+              semanticsLabel: 'Overall progress',
+              semanticsValue: '78%',
+            ),
+          ),
+          const SizedBox(height: 20),
+          const _Capsule(
+            icon: Icons.schedule_outlined,
+            label: '2 exercises · About 12 minutes',
+            dark: true,
           ),
         ],
       ),
@@ -225,11 +287,12 @@ class _ExerciseCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final progress = exercise.correct / exercise.total;
     return Card(
-      elevation: 1,
+      color: inkSurface,
+      elevation: 0,
       semanticContainer: false,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: exercise.accent.withValues(alpha: .25)),
+        borderRadius: BorderRadius.circular(24),
+        side: const BorderSide(color: Color(0xFF33413B)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -238,31 +301,87 @@ class _ExerciseCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.accessibility_new, color: exercise.accent),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: const BoxDecoration(
+                    color: inkRaised,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.accessibility_new_outlined,
+                    color: exercise.accent,
+                  ),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     exercise.name,
-                    style: Theme.of(context).textTheme.titleMedium,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: cloud,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(exercise.detail),
             const SizedBox(height: 16),
-            Text('${exercise.correct} / ${exercise.total} correct'),
+            _Capsule(label: exercise.detail, dark: true),
+            const SizedBox(height: 16),
+            Text(
+              '${exercise.correct} / ${exercise.total} correct',
+              style: const TextStyle(color: cloud, fontWeight: FontWeight.w800),
+            ),
             const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: progress,
-              color: exercise.accent,
-              semanticsLabel:
-                  '${exercise.name}: ${exercise.correct} of ${exercise.total} correct repetitions',
-              semanticsValue: '${(progress * 100).round()}%',
+            ClipRRect(
+              borderRadius: BorderRadius.circular(99),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                color: exercise.accent,
+                backgroundColor: ink,
+                semanticsLabel:
+                    '${exercise.name}: ${exercise.correct} of ${exercise.total} correct repetitions',
+                semanticsValue: '${(progress * 100).round()}%',
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _Capsule extends StatelessWidget {
+  const _Capsule({required this.label, this.icon, this.dark = false});
+  final String label;
+  final IconData? icon;
+  final bool dark;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: ShapeDecoration(
+      color: dark ? inkRaised : const Color(0x2AD9FF4A),
+      shape: const StadiumBorder(),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (icon case final icon?) ...[
+          Icon(icon, color: dark ? mint : lime, size: 16),
+          const SizedBox(width: 6),
+        ],
+        Text(
+          label,
+          style: TextStyle(
+            color: dark ? muted : lime,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            letterSpacing: .2,
+          ),
+        ),
+      ],
+    ),
+  );
 }

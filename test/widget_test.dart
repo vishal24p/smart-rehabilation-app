@@ -9,12 +9,14 @@ void main() {
     final semantics = tester.ensureSemantics();
     await tester.pumpWidget(const MyApp());
 
+    expect(find.text('Good morning, Maya'), findsOneWidget);
     expect(find.text('Session overview'), findsOneWidget);
-    expect(find.text('Seated Knee Extension'), findsOneWidget);
-    expect(find.text('16 / 20 correct'), findsOneWidget);
     expect(find.textContaining('28 / 36'), findsOneWidget);
     expect(find.text('78%'), findsOneWidget);
-    expect(find.bySemanticsLabel('Overall progress'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('Overall progress')), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Seated Knee Extension'), 200);
+    expect(find.text('Seated Knee Extension'), findsOneWidget);
+    expect(find.text('16 / 20 correct'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
         'Seated Knee Extension: 16 of 20 correct repetitions',
@@ -23,6 +25,7 @@ void main() {
     );
 
     await tester.scrollUntilVisible(find.text('12 / 16 correct'), 200);
+    expect(find.text('Supported Sit to Stand'), findsOneWidget);
     expect(find.text('12 / 16 correct'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
