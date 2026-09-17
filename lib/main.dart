@@ -1,121 +1,228 @@
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
+const teal = Color(0xFF00796B);
+const lavender = Color(0xFF6750A4);
+
+const exercises = <Exercise>[
+  Exercise(
+    name: 'Seated Knee Extension',
+    detail: 'Strength · 2 sets',
+    correct: 16,
+    total: 20,
+    accent: teal,
+  ),
+  Exercise(
+    name: 'Supported Sit to Stand',
+    detail: 'Mobility · 2 sets',
+    correct: 12,
+    total: 16,
+    accent: lavender,
+  ),
+];
+
+void main() => runApp(const MyApp());
+
+class Exercise {
+  const Exercise({
+    required this.name,
+    required this.detail,
+    required this.correct,
+    required this.total,
+    required this.accent,
+  });
+  final String name;
+  final String detail;
+  final int correct;
+  final int total;
+  final Color accent;
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
-  }
+  Widget build(BuildContext context) => MaterialApp(
+    debugShowCheckedModeBanner: false,
+    title: 'Rehab monitor',
+    theme: ThemeData(
+      colorScheme: ColorScheme.fromSeed(seedColor: teal),
+      useMaterial3: true,
+    ),
+    home: const HomeScreen(),
+  );
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _HomeScreenState extends State<HomeScreen> {
+  int _selectedIndex = 0;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  void _selectDestination(int index) {
+    setState(() => _selectedIndex = index);
+    if (index != 0) {
+      final section = index == 1 ? 'Progress' : 'Profile';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$section is coming in the next mock iteration.'),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: _selectDestination,
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
+          NavigationDestination(
+            icon: Icon(Icons.insights_outlined),
+            label: 'Progress',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            label: 'Profile',
+          ),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
           children: [
-            const Text('You have pushed the button this many times:'),
+            Text('Good morning, Maya', style: theme.textTheme.headlineSmall),
+            const SizedBox(height: 8),
             Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+              'Your rehabilitation session is ready.',
+              style: theme.textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 24),
+            _OverallCard(theme: theme),
+            const SizedBox(height: 24),
+            Text('Session overview', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 12),
+            ...exercises.map(
+              (exercise) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _ExerciseCard(exercise: exercise),
+              ),
+            ),
+            const SizedBox(height: 4),
+            FilledButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Continue session'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+              ),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+    );
+  }
+}
+
+class _OverallCard extends StatelessWidget {
+  const _OverallCard({required this.theme});
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    elevation: 1,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Today’s progress', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '28 / 36\ncorrect repetitions',
+                  style: theme.textTheme.headlineSmall,
+                ),
+              ),
+              Semantics(
+                label: 'Overall progress: 78 percent',
+                child: Text('78%', style: theme.textTheme.displaySmall),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const LinearProgressIndicator(value: 28 / 36),
+          const SizedBox(height: 16),
+          const Row(
+            children: [
+              Icon(Icons.schedule_outlined, size: 20),
+              SizedBox(width: 8),
+              Text('2 exercises · About 12 minutes'),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _ExerciseCard extends StatelessWidget {
+  const _ExerciseCard({required this.exercise});
+  final Exercise exercise;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = exercise.correct / exercise.total;
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: exercise.accent.withValues(alpha: .25)),
+      ),
+      child: Semantics(
+        label:
+            '${exercise.name}, ${exercise.correct} of ${exercise.total} correct repetitions',
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.accessibility_new, color: exercise.accent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      exercise.name,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(exercise.detail),
+              const SizedBox(height: 16),
+              Text('${exercise.correct} / ${exercise.total} correct'),
+              const SizedBox(height: 8),
+              Semantics(
+                label:
+                    '${exercise.name} progress: ${exercise.correct} of ${exercise.total}',
+                child: LinearProgressIndicator(
+                  value: progress,
+                  color: exercise.accent,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
