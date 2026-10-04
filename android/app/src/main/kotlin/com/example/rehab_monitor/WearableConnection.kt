@@ -15,9 +15,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import com.chaquo.python.PyException
+import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.net.InetSocketAddress
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
 
 class WearableConnection(private val activity: Activity, private val event: (String) -> Unit) {
@@ -26,18 +28,21 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     private val wifi = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var stream: WearableStream? = null
+    private var processing: RehabProcessing? = null
+    private var closing: RehabProcessing? = null
+    private var stoppedSnapshot: String? = null
     private var selectedNetwork: Network? = null
     private var generation = 0L
     private var active = false
     private var pendingPermission: Long? = null
-    private var scaleConfirmed = false
     private var networkRetry = 0
 
     fun connect(scaleConfirmed: Boolean) {
         if (active) { status("error", "connection_busy", "Disconnect before starting another connection."); return }
         active = true
         generation++
-        this.scaleConfirmed = scaleConfirmed
+        stoppedSnapshot = null
+        processing = RehabProcessing({ pythonProcessor(scaleConfirmed) }, { main.post(it) })
         networkRetry = 0
         status("connecting", "requesting_wifi", "Connecting to REHAB-WEARABLE…")
         val permissions = when {
@@ -86,9 +91,12 @@ class WearableConnection(private val activity: Activity, private val event: (Str
             override fun onLost(network: Network) = main.post {
                 if (active && token == generation && selectedNetwork == network) {
                     generation++
+                    val nextToken = generation
+                    processing?.interrupt("Wearable Wi-Fi disconnected.") { result ->
+                        if (active && nextToken == generation) result.getOrNull()?.let { analytics(it) }
+                    }
                     releaseResources()
                     status("reconnecting", "network_lost", "Wearable Wi-Fi disconnected. Reconnecting…")
-                    val nextToken = generation
                     main.postDelayed({ requestNetwork(nextToken) }, longArrayOf(1000, 2000, 5000)[minOf(networkRetry++, 2)])
                 }
             }.let { Unit }
@@ -112,8 +120,10 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     }
 
     private fun startStream(network: Network, token: Long) {
+        val queue = processing ?: return
         selectedNetwork = network
         val factory = network.socketFactory
+        val sampleGeneration = AtomicLong()
         stream = WearableStream(
             createSocket = {
                 factory.createSocket().also { socket ->
@@ -122,35 +132,86 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 }
             },
             parserFactory = {
-                synchronized(Python::class.java) {
-                    if (!Python.isStarted()) Python.start(AndroidPlatform(activity.applicationContext))
+                val parse = queue.newParser()
+                val parseLine: (String) -> String? = { line ->
+                    val socketToken = queue.generation
+                    val sample = parse(line)
+                    sampleGeneration.set(socketToken)
+                    sample
                 }
-                val parser = Python.getInstance().getModule("rehab_sensor").callAttr("SensorParser", scaleConfirmed)
-                val parse: (String) -> String? = { line ->
-                    try { parser.callAttr("process_line", line)?.toString() }
-                    catch (error: PyException) { throw WearableStream.ProtocolException(error.message ?: "Invalid CSV header") }
-                }
-                parse
+                parseLine
             },
-            event = { payload -> main.post {
-                if (active && token == generation) {
-                    event(payload)
-                    if (payload.contains("\"status\":\"error\"")) {
-                        active = false
-                        generation++
-                        releaseResources()
+            interruptSession = {
+                queue.interrupt("Wearable TCP connection lost.") { result ->
+                    if (active && token == generation) result.getOrNull()?.let { analytics(it) }
+                }
+            },
+            event = { payload ->
+                val socketToken = if (payload.contains("\"type\":\"sample\"")) sampleGeneration.get() else queue.generation
+                queue.dispatchCurrent(socketToken) {
+                    if (active && token == generation && queue === processing) {
+                        event(payload)
+                        if (payload.contains("\"status\":\"error\"")) {
+                            finishConnection("Sensor stream stopped.")
+                        }
                     }
                 }
-            } },
+            },
         ).also { it.start() }
     }
 
-    fun disconnect() {
+    fun sessionCommand(arguments: Any?, completion: (Result<String>) -> Unit) {
+        val command = try { RehabProcessing.validateCommand(arguments) }
+        catch (error: IllegalArgumentException) { completion(Result.failure(error)); return }
+        val queue = processing
+        if (!active || queue == null) {
+            completion(Result.failure(RehabProcessing.UnavailableException("Connect to the wearable before controlling a session.")))
+            return
+        }
+        val token = generation
+        queue.command(command.first, command.second) { result ->
+            if (!active || token != generation || queue !== processing) {
+                completion(Result.failure(RehabProcessing.UnavailableException("Session connection changed. Retry the command.")))
+            } else {
+                result.getOrNull()?.let { analytics(it) }
+                completion(result)
+                val error = result.exceptionOrNull()
+                if (error != null && error !is RehabProcessing.UnavailableException) {
+                    fail("processing_failed", "Session processing failed. Disconnect and retry.")
+                }
+            }
+        }
+    }
+
+    fun disconnect(completion: (String?) -> Unit = {}) {
+        finishConnection("Wearable disconnected.",
+            finalStatus = { status("disconnected", "disconnected", "Wearable disconnected.") }, completion = completion)
+    }
+
+    private fun finishConnection(reason: String, finalStatus: () -> Unit = {}, completion: (String?) -> Unit = {}) {
+        val pendingClose = closing
+        if (!active && processing == null && pendingClose != null) {
+            val token = generation
+            pendingClose.close(reason) { result -> completion(if (token == generation) result.getOrNull() else null) }
+            return
+        }
         active = false
-        generation++
+        val token = ++generation
         pendingPermission = null
+        val queue = processing
+        processing = null
+        closing = queue
         releaseResources()
-        status("disconnected", "disconnected", "Wearable disconnected.")
+        if (queue == null) { finalStatus(); completion(stoppedSnapshot); return }
+        queue.close(reason) { result ->
+            if (closing === queue) closing = null
+            if (token == generation) {
+                stoppedSnapshot = result.getOrNull()
+                stoppedSnapshot?.let { analytics(it) }
+                finalStatus()
+            }
+            completion(if (token == generation) result.getOrNull() else null)
+        }
     }
 
     private fun releaseResources() {
@@ -162,11 +223,33 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     }
 
     private fun fail(code: String, message: String) {
-        active = false
-        generation++
-        pendingPermission = null
-        releaseResources()
-        status("error", code, message)
+        finishConnection(message, finalStatus = { status("error", code, message) })
+    }
+
+    private fun analytics(snapshot: String) = event("{\"type\":\"analytics\",\"analytics\":$snapshot}")
+
+    /** Constructed on rehab-python; no Python startup, parser or command runs on main. */
+    private fun pythonProcessor(scaleConfirmed: Boolean): RehabProcessing.Processor {
+        synchronized(Python::class.java) {
+            if (!Python.isStarted()) Python.start(AndroidPlatform(activity.applicationContext))
+        }
+        val python = Python.getInstance()
+        val session = python.getModule("rehab_session").callAttr("SessionProcessor")
+        val sensor = python.getModule("rehab_sensor")
+        val json = python.getModule("json")
+        return object : RehabProcessing.Processor {
+            private var parser: PyObject? = null
+            private fun encode(snapshot: PyObject) = json.callAttr("dumps", snapshot).toString()
+            override fun newParser() { parser = sensor.callAttr("SensorParser", scaleConfirmed, session) }
+            override fun parse(line: String): String? = try { parser!!.callAttr("process_line", line)?.toString() }
+                catch (error: PyException) { throw WearableStream.ProtocolException(error.message ?: "Invalid CSV header") }
+            override fun command(action: String, config: Map<*, *>?): String {
+                val pythonConfig = config?.let { json.callAttr("loads", JSONObject(it).toString()) }
+                return encode(session.callAttr("command", action, pythonConfig))
+            }
+            override fun interrupt(reason: String) = encode(session.callAttr("interrupt", reason))
+            override fun snapshot() = encode(session.callAttr("snapshot"))
+        }
     }
 
     private fun status(state: String, code: String, message: String) = event(JSONObject()
