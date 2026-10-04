@@ -69,8 +69,9 @@ void main() {
       Map<dynamic, dynamic>? arguments;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(fixtures.commands, (call) async {
-            if (call.method == 'connect')
+            if (call.method == 'connect') {
               arguments = call.arguments as Map<dynamic, dynamic>;
+            }
             return null;
           });
       await tester.pumpWidget(

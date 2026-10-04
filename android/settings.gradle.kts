@@ -25,3 +25,8 @@ plugins {
 }
 
 include(":app")
+
+// Set before Flutter applies its plugin so it retains the app's explicit ABI filters.
+gradle.beforeProject {
+    if (path == ":app") extensions.extraProperties["disable-abi-filtering"] = true
+}
