@@ -33,11 +33,13 @@ class RehabProcessing(
     fun dispatchCurrent(token: Long, callback: () -> Unit) = dispatch { if (isCurrent(token)) callback() }
 
     /** Called by the TCP reader, never by the Android main thread. */
-    fun newParser(): (String) -> String? {
+    fun newParser(expectedGeneration: Long? = null, onGeneration: (Long) -> Unit = {}): (String) -> String? {
         val token: Long
         val setup = synchronized(lock) {
             check(!closed) { "Processing queue is closed." }
+            expectedGeneration?.let { checkCurrent(it) }
             token = ++epoch
+            onGeneration(token)
             ready = false
             worker.submit {
                 checkCurrent(token)
@@ -84,9 +86,13 @@ class RehabProcessing(
     }
 
     /** Invalidate queued old work immediately, then interrupt on the ordered worker. */
-    fun interrupt(reason: String, completion: (Result<String?>) -> Unit = {}) {
+    fun interrupt(reason: String, expectedGeneration: Long? = null, completion: (Result<String?>) -> Unit = {}): Long? {
         synchronized(lock) {
-            if (closed) return
+            if (closed) return null
+            if (expectedGeneration != null && expectedGeneration != epoch) {
+                dispatch { completion(Result.failure(UnavailableException("Session connection changed."))) }
+                return null
+            }
             val token = ++epoch
             ready = false
             worker.execute {
@@ -95,6 +101,7 @@ class RehabProcessing(
                     completion(if (isCurrent(token)) result else Result.failure(UnavailableException("Session connection changed.")))
                 }
             }
+            return token
         }
     }
 

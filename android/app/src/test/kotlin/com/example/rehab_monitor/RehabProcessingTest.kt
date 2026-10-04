@@ -188,4 +188,76 @@ class RehabProcessingTest {
             assertThrows(IllegalArgumentException::class.java) { RehabProcessing.validateCommand(bad) }
         }
     }
+
+    @Test fun stale_retry_callback_cannot_interrupt_replacement_session() {
+        val fake = FakeProcessor()
+        val queue = RehabProcessing({ fake })
+        queue.newParser()("old frame")
+        val oldEpoch = queue.generation
+        val paused = CountDownLatch(1)
+        val resumed = CountDownLatch(1)
+        val completed = CountDownLatch(1)
+        val oldWorker = Thread {
+            paused.countDown() // Old TCP worker has already passed its active check.
+            resumed.await()
+            queue.interrupt("stale TCP retry", oldEpoch) { completed.countDown() }
+        }
+        oldWorker.start()
+        try {
+            await(paused)
+            val lost = CountDownLatch(1)
+            queue.interrupt("Wi-Fi lost") { lost.countDown() }; await(lost)
+            val fresh = queue.newParser()
+            val started = CountDownLatch(1)
+            queue.command("start", null) { started.countDown() }; await(started)
+            val freshEpoch = queue.generation
+            assertTrue(freshEpoch > oldEpoch)
+            resumed.countDown(); await(completed)
+            assertEquals(freshEpoch, queue.generation)
+            assertEquals("active", fake.state)
+            assertFalse(fake.calls.contains("interrupt:stale TCP retry"))
+            assertEquals("sample:2", fresh("fresh frame"))
+            val accepted = CountDownLatch(1)
+            queue.command("end", null) { assertTrue(it.isSuccess); accepted.countDown() }; await(accepted)
+        } finally { resumed.countDown(); oldWorker.join(3000); close(queue) }
+    }
+
+    @Test fun stale_parser_setup_cannot_reset_replacement_session() {
+        val fake = FakeProcessor()
+        val queue = RehabProcessing({ fake })
+        queue.newParser()
+        val oldEpoch = queue.generation
+        val fresh = queue.newParser()
+        val started = CountDownLatch(1)
+        queue.command("start", null) { started.countDown() }; await(started)
+        val freshEpoch = queue.generation
+        try {
+            assertThrows(RehabProcessing.UnavailableException::class.java) { queue.newParser(oldEpoch) }
+            assertEquals(freshEpoch, queue.generation)
+            assertTrue(freshEpoch > oldEpoch)
+            assertEquals("active", fake.state)
+            assertEquals("sample:1", fresh("fresh frame"))
+        } finally { close(queue) }
+    }
+
+    @Test fun current_retry_advances_epoch_and_allows_replacement_parser() {
+        val fake = FakeProcessor()
+        val queue = RehabProcessing({ fake })
+        var captured = queue.generation
+        val old = queue.newParser(captured) { captured = it }
+        old("old frame")
+        val oldEpoch = captured
+        val interrupted = CountDownLatch(1)
+        val next = queue.interrupt("current TCP retry", oldEpoch) { assertTrue(it.isSuccess); interrupted.countDown() }
+        await(interrupted)
+        assertEquals(oldEpoch + 1, next)
+        assertEquals(next, queue.generation)
+        val fresh = queue.newParser(next) { captured = it }
+        try {
+            assertEquals(queue.generation, captured)
+            assertNull(old("stale frame"))
+            assertEquals("sample:2", fresh("fresh frame"))
+            assertTrue(fake.calls.indexOf("interrupt:current TCP retry") < fake.calls.lastIndexOf("parser"))
+        } finally { close(queue) }
+    }
 }

@@ -123,7 +123,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         val queue = processing ?: return
         selectedNetwork = network
         val factory = network.socketFactory
-        val sampleGeneration = AtomicLong()
+        val socketGeneration = AtomicLong(queue.generation)
         stream = WearableStream(
             createSocket = {
                 factory.createSocket().also { socket ->
@@ -132,22 +132,16 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 }
             },
             parserFactory = {
-                val parse = queue.newParser()
-                val parseLine: (String) -> String? = { line ->
-                    val socketToken = queue.generation
-                    val sample = parse(line)
-                    sampleGeneration.set(socketToken)
-                    sample
-                }
-                parseLine
+                queue.newParser(socketGeneration.get()) { socketGeneration.set(it) }
             },
             interruptSession = {
-                queue.interrupt("Wearable TCP connection lost.") { result ->
+                val nextEpoch = queue.interrupt("Wearable TCP connection lost.", socketGeneration.get()) { result ->
                     if (active && token == generation) result.getOrNull()?.let { analytics(it) }
                 }
+                nextEpoch?.let { socketGeneration.set(it) }
             },
             event = { payload ->
-                val socketToken = if (payload.contains("\"type\":\"sample\"")) sampleGeneration.get() else queue.generation
+                val socketToken = socketGeneration.get()
                 queue.dispatchCurrent(socketToken) {
                     if (active && token == generation && queue === processing) {
                         event(payload)
