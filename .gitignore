@@ -1,3 +1,7 @@
 docs/
 .dart_tool/
 build/
+__pycache__/
+*.py[cod]
+test/failures/
+android/.kotlin/

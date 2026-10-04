@@ -4,19 +4,25 @@
 
 ## Platform
 
-ios
+android
 
 ## Users and purpose
 
-People reviewing their rehabilitation exercise session on a mobile phone.
-Show correct repetitions against total repetitions for two exercises.
+People checking wearable sensor readings during rehabilitation on an Android phone.
+Connect to ESP32 over local Wi-Fi and inspect thigh, shin and heel readings.
+A separate sample dashboard illustrates exercise session review.
 
 ## Capabilities and constraints
 
-Flutter mock only. No sensors, backend, authentication, or persistence yet.
+Flutter Android live sensor readings with Python embedded in the APK. ESP32 streams
+thigh/shin IMU readings and heel ADC over local Wi-Fi; show readings and a ten-second
+heel ADC graph. Foreground sessions only, with no auth or persistence. Calibration,
+validated repetitions, knee angle/ROM and live accuracy are a later milestone.
+Keep sample session review clearly distinct from actual live readings.
 Current sample: seated knee extension 16/20; supported sit to stand 12/16.
-Combined: 28/36, rounded to 78%. iOS-like visual direction; Flutter remains
-cross-platform and this platform label is not a restriction on deployment.
+Combined sample: 28/36, rounded to 78%. Preserve the current visual direction.
+Live Python/Wi-Fi support targets Android first; other Flutter platforms can
+still display the sample dashboard.
 
 ## Brand commitments
 
