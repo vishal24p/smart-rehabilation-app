@@ -1,5 +1,7 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("com.chaquo.python")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -23,6 +25,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -42,4 +47,13 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            buildPython("py", "-3.11")
+        }
+    }
 }
