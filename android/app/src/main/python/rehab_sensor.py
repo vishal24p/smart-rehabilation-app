@@ -28,7 +28,8 @@ class SensorParser:
             self._header_received = True
             self._last_timestamp = None
             return None
-        if fields[0].startswith('time_') or (
+        if (re.fullmatch(r'[+-]?[0-9]+', fields[0]) is None
+                and any(field in HEADER for field in fields)) or (
             len(fields) == len(HEADER) and all(field.isidentifier() for field in fields)
         ):
             self._header_received = False

@@ -39,6 +39,15 @@ class SensorParserTest(unittest.TestCase):
         self.assertEqual(sample['thigh_gyro'], [131, 0, -131])
         self.assertEqual(sample['fsr'], 500)
 
+    def test_unsupported_header_invalidates_previous_header(self):
+        for header in (HEADER.split(',', 1)[1], HEADER.replace('time_us', 'timestamp-us')):
+            with self.subTest(header=header):
+                parser = self.parser()
+                self.assertIsNotNone(parser.process_line(frame()))
+                with self.assertRaises(ValueError):
+                    parser.process_line(header)
+                self.assertIsNone(parser.process_line(frame(101)))
+
     def test_default_range_conversion(self):
         sample = json.loads(self.parser(True).process_line(frame()))
         self.assertTrue(sample['scaled'])
