@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 32 32" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Rehab — motion mark</title>
+  <desc id="desc">An open lowercase r with a forward stride and a detached sensor node.</desc>
+  <g stroke="#47664F" stroke-width="4.5" stroke-linecap="round">
+    <path d="M7 26V15C7 9 11 6 17 6H23"/>
+    <path d="M14 17Q18 20 24 26"/>
+  </g>
+  <circle cx="24" cy="14" r="2.5" fill="#47664F"/>
+</svg>
