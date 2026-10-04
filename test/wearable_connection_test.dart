@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -122,4 +123,47 @@ void main() {
       unsupported.dispose();
     },
   );
+
+  test('old Wi-Fi settings error cannot clear a newer live session', () async {
+    final gate = Completer<Object?>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(commands, (call) async {
+          if (call.method == 'openWifiSettings') return gate.future;
+          return null;
+        });
+    final settings = connection.openWifiSettings();
+    await connection.connect();
+    await emit(sample());
+    gate.completeError(PlatformException(code: 'settings_unavailable'));
+    await settings;
+    expect(connection.status, WearableStatus.live);
+    expect(connection.latest!.fsr, 1200);
+  });
+
+  test('delayed disconnect cleanup cannot stop a newer connection', () async {
+    final gate = Completer<Object?>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('rehab/wearable/events'),
+          (call) async {
+            if (call.method == 'cancel') return gate.future;
+            return null;
+          },
+        );
+    await connection.connect();
+    final stopped = connection.disconnect();
+    await connection.connect();
+    gate.complete(null);
+    await stopped;
+    expect(calls.last, 'connect');
+    expect(connection.status, WearableStatus.connecting);
+  });
+
+  test('dispose releases native worker and ignores queued readings', () async {
+    await connection.connect();
+    connection.dispose();
+    await emit(sample());
+    expect(connection.latest, isNull);
+    expect(calls, contains('disconnect'));
+  });
 }

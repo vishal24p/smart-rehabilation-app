@@ -62,6 +62,74 @@ void main() {
     expect(find.text('Retry connection'), findsOneWidget);
   });
 
+  testWidgets(
+    'confirmed ranges reach Python and readings have semantic labels',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      Map<dynamic, dynamic>? arguments;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(fixtures.commands, (call) async {
+            if (call.method == 'connect')
+              arguments = call.arguments as Map<dynamic, dynamic>;
+            return null;
+          });
+      await tester.pumpWidget(
+        MaterialApp(home: LiveSensorScreen(connection: connection)),
+      );
+      await tester.tap(find.text('IMU ranges confirmed'));
+      await tester.pump();
+      await tester.tap(find.text('Connect wearable'));
+      await tester.pump();
+      expect(arguments?['scaleConfirmed'], isTrue);
+      final scaled = fixtures.sample()
+        ..['scaled'] = true
+        ..['thigh_accel'] = [0.2, 0.3, 0.4]
+        ..['shin_accel'] = [0.1, 0.2, 0.3];
+      await tester.runAsync(() => fixtures.emit(scaled));
+      await tester.pump();
+      await tester.scrollUntilVisible(find.text('Acceleration · g').first, 100);
+      expect(find.text('Angular velocity · °/s'), findsWidgets);
+      await tester.scrollUntilVisible(find.text('1200 / 4095'), 200);
+      expect(
+        find.bySemanticsLabel('Heel pressure ADC reading 1200 out of 4095'),
+        findsOneWidget,
+      );
+      await tester.scrollUntilVisible(
+        find.text('Heel ADC · last 10 seconds'),
+        100,
+      );
+      expect(
+        find.bySemanticsLabel(RegExp('Heel ADC graph.*latest 1200')),
+        findsOneWidget,
+      );
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('background and route exit stop readings without auto-resume', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: LiveSensorScreen(connection: connection)),
+    );
+    await connection.connect();
+    await tester.runAsync(() => fixtures.emit(fixtures.sample()));
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    expect(connection.status, WearableStatus.disconnected);
+    expect(connection.latest, isNull);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(connection.status, WearableStatus.disconnected);
+    await connection.connect();
+    await tester.runAsync(() => fixtures.emit(fixtures.sample()));
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pump();
+    expect(connection.status, WearableStatus.disconnected);
+    expect(connection.latest, isNull);
+  });
+
   for (final size in [const Size(320, 640), const Size(844, 390)]) {
     testWidgets('live screen fits $size with large text', (tester) async {
       tester.view.physicalSize = size;

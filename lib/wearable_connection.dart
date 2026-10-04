@@ -255,14 +255,17 @@ class WearableConnection extends ChangeNotifier {
 
   Future<void> openWifiSettings() async {
     if (!_android || _disposed) return;
+    final generation = _generation;
     try {
       await commands.invokeMethod<void>('openWifiSettings');
     } on PlatformException {
+      if (_disposed || generation != _generation) return;
       _setStatus(
         WearableStatus.error,
         'Open Wi-Fi settings on your phone and join REHAB-WEARABLE.',
       );
     } on MissingPluginException {
+      if (_disposed || generation != _generation) return;
       _setStatus(
         WearableStatus.unsupported,
         'Wi-Fi settings are available in the Android app.',
