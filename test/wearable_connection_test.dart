@@ -85,7 +85,10 @@ void main() {
   });
 
   test('analytics validates nullable metrics and immutable summary', () {
-    expect(RehabAnalytics.fromJson(analytics()..['reason'] = null).reason, isNull);
+    expect(
+      RehabAnalytics.fromJson(analytics()..['reason'] = null).reason,
+      isNull,
+    );
     final empty = RehabAnalytics.fromJson(analytics());
     expect(empty.angleDeg, isNull);
     expect(empty.cycles, isNull);
@@ -273,6 +276,9 @@ void main() {
       expect(connection.commandError, isNull);
       expect(connection.analytics!.cycles, 0);
       expect(connection.analytics!.summary, isNull);
+      await emit(sample(time: 11)..['analytics'] = analytics(state: 'active', cycles: 1));
+      expect(connection.analytics!.cycles, 1);
+      expect(connection.latest!.timeUs, 11);
     },
   );
 
