@@ -102,8 +102,11 @@ class SessionProcessor:
             self.progress = 0.0
             if action == 'standing':
                 self._invalidate_motion()
-            elif action == 'heel_unloaded':
-                self.heel_baseline, self.heel_thresholds, self.heel_contact = None, None, None
+            else:
+                self.heel_thresholds, self.heel_contact = None, None
+                self.contact_candidate, self.contact_since = None, None
+                if action == 'heel_unloaded':
+                    self.heel_baseline = None
             self.state = action
         elif action == 'movement':
             if self.state != 'movement_ready':
@@ -259,7 +262,8 @@ class SessionProcessor:
             noise = max(mad, unloaded_mad)
             self.state = 'setup'
             if separation < max(50, 6*noise) or noise > max(12, 0.08*separation):
-                self.heel_thresholds = None
+                self.heel_thresholds, self.heel_contact = None, None
+                self.contact_candidate, self.contact_since = None, None
                 self.reason = 'Heel readings overlap; repeat heel capture or continue to standing.'
                 return
             delta = center-unloaded

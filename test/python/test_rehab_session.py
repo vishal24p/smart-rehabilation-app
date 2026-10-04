@@ -314,6 +314,30 @@ class HeelTest(unittest.TestCase):
         self.assertTrue(result['heel_contact'])
         self.assertTrue(result['heel_saturated'])
 
+    def test_loaded_recapture_clears_contact_and_failed_capture_stays_unknown(self):
+        for unloaded, loaded, overlap in ((100, 1000, 120), (1000, 100, 980)):
+            for stage in ('start', 'failed'):
+                with self.subTest(unloaded=unloaded, stage=stage):
+                    rig = self.calibrate(unloaded, loaded)
+                    self.assertTrue(rig.feed(seconds=0.2, fsr=loaded)['heel_contact'])
+                    rig.feed(seconds=0.05, fsr=unloaded)
+                    self.assertFalse(rig.processor.contact_candidate)
+                    result = rig.processor.command('heel_loaded')
+                    if stage == 'failed':
+                        result = rig.feed(seconds=2.1, fsr=overlap)
+                        self.assertEqual(result['state'], 'setup')
+                        self.assertIsNotNone(result['reason'])
+                    self.assertIsNone(rig.processor.heel_thresholds)
+                    self.assertIsNone(result['heel_contact'])
+                    self.assertIsNone(rig.processor.contact_candidate)
+                    self.assertIsNone(rig.processor.contact_since)
+                    if stage == 'failed':
+                        self.assertIsNone(rig.feed(seconds=0.3, fsr=loaded)['heel_contact'])
+                        self.assertEqual(rig.processor.command('standing')['state'], 'standing')
+                        result = rig.feed(seconds=3.1, fsr=loaded)
+                        self.assertEqual(result['state'], 'movement_ready')
+                        self.assertIsNone(result['heel_contact'])
+
     def test_capture_requires_duration_and_count(self):
         rig = Rig(dt=200_000)
         rig.processor.command('heel_unloaded')
