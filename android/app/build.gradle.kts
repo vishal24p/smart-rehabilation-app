@@ -6,6 +6,9 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Keep the explicit Python-compatible ABIs instead of Flutter's default ABI list.
+project.extensions.extraProperties["disable-abi-filtering"] = true
+
 android {
     namespace = "com.example.rehab_monitor"
     compileSdk = flutter.compileSdkVersion
