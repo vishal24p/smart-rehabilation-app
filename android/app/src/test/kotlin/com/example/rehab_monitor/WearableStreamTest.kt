@@ -148,42 +148,6 @@ class WearableStreamTest {
         assertEquals(2, parserCount)
     }
 
-    @Test fun retry_interrupts_session_before_backoff_and_new_samples() {
-        val calls = CopyOnWriteArrayList<String>()
-        val finished = CountDownLatch(1)
-        var retries = 0
-        val stream = WearableStream({ TestSocket(ByteArrayInputStream("frame\n".toByteArray())) },
-            { calls.add("parser"); { calls.add("frame"); sample } }, {},
-            delay = { calls.add("backoff"); if (++retries == 2) { finished.countDown(); throw InterruptedException() } },
-            interruptSession = { calls.add("interrupt") })
-        stream.start(); await(finished); stream.stop()
-        assertEquals(listOf("parser", "frame", "interrupt", "backoff", "parser", "frame", "interrupt", "backoff"), calls)
-    }
-
-    @Test fun display_throttle_retains_cumulative_analytics() {
-        val queue = RehabProcessing({ object : RehabProcessing.Processor {
-            var count = 0
-            override fun newParser() {}
-            override fun parse(line: String): String { count++; return "{\"type\":\"sample\",\"analytics\":{\"cycles\":$count}}" }
-            override fun command(action: String, config: Map<*, *>?) = snapshot()
-            override fun interrupt(reason: String) = snapshot()
-            override fun snapshot() = "cycles:$count"
-        } })
-        var now = 0L
-        val events = CopyOnWriteArrayList<String>()
-        val finished = CountDownLatch(1)
-        val stream = WearableStream({ TestSocket(ByteArrayInputStream("a\nb\nc\nd\n".toByteArray())) },
-            { val parse = queue.newParser(); { line -> now += 40; parse(line) } },
-            { if (it.contains("\"sample\"")) events.add(it) }, clock = { now },
-            delay = { finished.countDown(); throw InterruptedException() })
-        stream.start(); await(finished); stream.stop()
-        assertEquals(2, events.size)
-        assertTrue(events.last().contains("\"cycles\":4"))
-        assertEquals("cycles:4", queue.lastSnapshot)
-        val closed = CountDownLatch(1)
-        queue.close("disconnect") { closed.countDown() }; await(closed)
-    }
-
     @Test fun previously_live_invalid_frames_become_stale_and_retry() {
         var now = 0L
         var parsed = 0

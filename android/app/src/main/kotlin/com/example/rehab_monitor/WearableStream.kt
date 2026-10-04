@@ -13,7 +13,6 @@ class WearableStream(
     private val event: (String) -> Unit,
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     private val delay: (Long) -> Unit = { Thread.sleep(it) },
-    private val interruptSession: () -> Unit = {},
 ) {
     class ProtocolException(message: String) : IOException(message)
     private val lock = Any()
@@ -65,11 +64,9 @@ class WearableStream(
                 break
             } catch (_: ConnectException) {
                 if (!active) break
-                interruptSession()
                 status("reconnecting", "connection_refused")
             } catch (_: IOException) {
                 if (!active) break
-                interruptSession()
                 status("reconnecting", "connection_lost")
             } catch (_: RuntimeException) {
                 status("error", "processing_failed")

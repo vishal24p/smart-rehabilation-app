@@ -5,7 +5,6 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'android/app/src/main/python'))
 from rehab_sensor import SensorParser
-from rehab_session import SessionProcessor
 
 HEADER = 'time_us,thigh_ax,thigh_ay,thigh_az,thigh_gx,thigh_gy,thigh_gz,shin_ax,shin_ay,shin_az,shin_gx,shin_gy,shin_gz,fsr'
 
@@ -83,49 +82,6 @@ class SensorParserTest(unittest.TestCase):
         self.assertIsNone(parser.process_line(frame()))
         parser.process_line(HEADER)
         self.assertIsNotNone(parser.process_line(frame()))
-
-
-class ParserAnalyticsTest(unittest.TestCase):
-    def test_every_sample_has_analytics_without_changing_raw_fields(self):
-        processor = SessionProcessor()
-        parser = SensorParser(processor=processor)
-        parser.process_line(HEADER)
-        for timestamp in range(100, 1100, 100):
-            sample = json.loads(parser.process_line(frame(timestamp)))
-            self.assertEqual(sample['analytics'], processor.snapshot())
-            self.assertEqual(sample['thigh_accel'], [16384, 0, -16384])
-            self.assertEqual(sample['fsr'], 500)
-
-    def test_headers_replacement_gap_and_rollback_interrupt_processor(self):
-        for event in ('header', 'invalid', 'replacement', 'gap', 'rollback'):
-            processor = SessionProcessor()
-            parser = SensorParser(processor=processor)
-            parser.process_line(HEADER)
-            parser.process_line(frame(1000))
-            processor.command('heel_unloaded')
-            self.assertEqual(processor.snapshot()['state'], 'heel_unloaded')
-            if event == 'header':
-                parser.process_line(HEADER)
-            elif event == 'invalid':
-                with self.assertRaises(ValueError):
-                    parser.process_line('time_us,fsr')
-            elif event == 'replacement':
-                SensorParser(processor=processor)
-            else:
-                parser.process_line(frame(300000 if event == 'gap' else 100))
-            self.assertEqual(processor.snapshot()['state'], 'needs_calibration')
-            self.assertIsNotNone(processor.snapshot()['reason'])
-
-    def test_malformed_duplicate_frames_do_not_advance_capture(self):
-        processor = SessionProcessor()
-        parser = SensorParser(processor=processor)
-        parser.process_line(HEADER)
-        processor.command('heel_unloaded')
-        parser.process_line(frame())
-        self.assertEqual(len(processor.capture), 1)
-        self.assertIsNone(parser.process_line(frame()))
-        self.assertIsNone(parser.process_line('invalid'))
-        self.assertEqual(len(processor.capture), 1)
 
 
 if __name__ == '__main__':

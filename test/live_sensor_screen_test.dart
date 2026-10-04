@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,22 +27,11 @@ void main() {
     );
     expect(find.text('Live sensors'), findsOneWidget);
     expect(find.text('Connect wearable'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('No readings yet'),
-      200,
-      maxScrolls: 80,
-    );
     expect(find.text('No readings yet'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Connect wearable'),
-      -200,
-      maxScrolls: 80,
-    );
     await tester.tap(find.text('Connect wearable'));
     await tester.pump();
     await tester.runAsync(() => fixtures.emit(fixtures.sample()));
     await tester.pump();
-    await tester.scrollUntilVisible(find.text('Live'), -200);
     expect(find.text('Live'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('1200 / 4095'), 200);
     expect(find.text('1200 / 4095'), findsOneWidget);
@@ -101,12 +88,7 @@ void main() {
         ..['shin_accel'] = [0.1, 0.2, 0.3];
       await tester.runAsync(() => fixtures.emit(scaled));
       await tester.pump();
-      await tester.scrollUntilVisible(
-        find.text('Thigh · MPU 0x69'),
-        200,
-        maxScrolls: 80,
-      );
-      expect(find.text('Acceleration · g'), findsWidgets);
+      await tester.scrollUntilVisible(find.text('Acceleration · g').first, 100);
       expect(find.text('Angular velocity · °/s'), findsWidgets);
       await tester.scrollUntilVisible(find.text('1200 / 4095'), 200);
       expect(
@@ -135,83 +117,19 @@ void main() {
     await tester.runAsync(() => fixtures.emit(fixtures.sample()));
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(connection.status, WearableStatus.disconnected);
     expect(connection.latest, isNull);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(connection.status, WearableStatus.disconnected);
-    await tester.runAsync(() => connection.connect());
+    await connection.connect();
     await tester.runAsync(() => fixtures.emit(fixtures.sample()));
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
     await tester.pump();
     expect(connection.status, WearableStatus.disconnected);
     expect(connection.latest, isNull);
   });
-
-  for (final duringSession in [false, true]) {
-    testWidgets('background preserves native summary: active=$duringSession', (
-      tester,
-    ) async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(fixtures.commands, (call) async {
-            if (call.method == 'disconnect') {
-              final snapshot = fixtures.analytics(
-                state: duringSession ? 'interrupted' : 'needs_calibration',
-              )..['reason'] = null;
-              if (duringSession) snapshot['summary'] = fixtures.summary();
-              return jsonEncode(snapshot);
-            }
-            return null;
-          });
-      await tester.pumpWidget(
-        MaterialApp(home: LiveSensorScreen(connection: connection)),
-      );
-      await connection.connect();
-      await tester.runAsync(
-        () => fixtures.emit(
-          fixtures.sample()
-            ..['analytics'] = fixtures.analytics(
-              state: duringSession ? 'active' : 'standing',
-              cycles: duringSession ? 2 : null,
-            ),
-        ),
-      );
-      await tester.pump();
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      await tester.pumpAndSettle();
-      expect(connection.status, WearableStatus.disconnected);
-      expect(connection.analytics!.cycles, isNull);
-      expect(connection.analytics!.angleDeg, isNull);
-      await tester.scrollUntilVisible(
-        find.text('Start session'),
-        200,
-        maxScrolls: 80,
-      );
-      expect(
-        tester
-            .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Start session'),
-            )
-            .onPressed,
-        isNull,
-      );
-      if (duringSession) {
-        await tester.scrollUntilVisible(
-          find.text('Interrupted session summary'),
-          200,
-          maxScrolls: 80,
-        );
-        expect(find.text('2 completed cycles'), findsOneWidget);
-        expect(connection.analytics!.summary!.interrupted, isTrue);
-      } else {
-        expect(connection.analytics!.summary, isNull);
-      }
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump();
-      expect(connection.status, WearableStatus.disconnected);
-    });
-  }
 
   for (final size in [const Size(320, 640), const Size(844, 390)]) {
     testWidgets('live screen fits $size with large text', (tester) async {
@@ -225,19 +143,13 @@ void main() {
         MaterialApp(home: LiveSensorScreen(connection: connection)),
       );
       await tester.scrollUntilVisible(find.text('Connect wearable'), 100);
-      await tester.ensureVisible(
-        find.widgetWithText(FilledButton, 'Connect wearable'),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Connect wearable'));
+      await tester.tap(find.text('Connect wearable'));
       await tester.pump();
       await tester.runAsync(() => fixtures.emit(fixtures.sample()));
       await tester.pump();
-      expect(connection.status, WearableStatus.live);
       await tester.scrollUntilVisible(
         find.text('Heel ADC · last 10 seconds'),
         200,
-        maxScrolls: 80,
       );
       expect(tester.takeException(), isNull);
     });

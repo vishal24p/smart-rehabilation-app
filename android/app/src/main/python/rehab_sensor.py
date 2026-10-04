@@ -3,8 +3,6 @@
 import json
 import re
 
-from rehab_session import SessionProcessor
-
 HEADER = (
     'time_us', 'thigh_ax', 'thigh_ay', 'thigh_az',
     'thigh_gx', 'thigh_gy', 'thigh_gz',
@@ -16,10 +14,7 @@ MAX_FRAME_BYTES = 512
 
 
 class SensorParser:
-    def __init__(self, scale_confirmed: bool = False, processor: SessionProcessor | None = None):
-        self.processor = processor if processor is not None else SessionProcessor()
-        if processor is not None:
-            self.processor.interrupt('New sensor connection; repeat calibration.')
+    def __init__(self, scale_confirmed: bool = False):
         self.scale_confirmed = scale_confirmed
         self._header_received = False
         self._last_timestamp = None
@@ -30,8 +25,6 @@ class SensorParser:
             return None
         fields = tuple(field.strip() for field in line.split(','))
         if fields == HEADER:
-            if self._header_received:
-                self.processor.interrupt('Repeated sensor header; repeat calibration.')
             self._header_received = True
             self._last_timestamp = None
             return None
@@ -40,7 +33,6 @@ class SensorParser:
             len(fields) == len(HEADER) and all(field.isidentifier() for field in fields)
         ):
             self._header_received = False
-            self.processor.interrupt('Unsupported sensor CSV header; check the device stream.')
             raise ValueError('Unsupported sensor CSV header')
         if not self._header_received:
             return None
@@ -63,13 +55,11 @@ class SensorParser:
         self._last_timestamp = timestamp
         acceleration = ACCEL_DIVISOR if self.scale_confirmed else 1
         gyro = GYRO_DIVISOR if self.scale_confirmed else 1
-        sample = {
+        return json.dumps({
             'type': 'sample', 'time_us': timestamp, 'restart': restart,
             'thigh_accel': [value / acceleration for value in values[1:4]],
             'thigh_gyro': [value / gyro for value in values[4:7]],
             'shin_accel': [value / acceleration for value in values[7:10]],
             'shin_gyro': [value / gyro for value in values[10:13]],
             'fsr': fsr, 'scaled': self.scale_confirmed,
-        }
-        sample['analytics'] = self.processor.process(sample)
-        return json.dumps(sample, separators=(',', ':'))
+        }, separators=(',', ':'))

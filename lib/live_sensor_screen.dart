@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'wearable_connection.dart';
-import 'rehab_session_panel.dart';
 
 class LiveSensorScreen extends StatefulWidget {
   const LiveSensorScreen({this.connection, super.key});
@@ -85,10 +84,6 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                     _connection.message,
                     style: const TextStyle(height: 1.5),
                   ),
-                  if (readings == null) ...[
-                    const SizedBox(height: 12),
-                    const Text('No readings yet'),
-                  ],
                   const SizedBox(height: 20),
                   FilledButton.icon(
                     onPressed: _connection.status == WearableStatus.unsupported
@@ -136,17 +131,12 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                     ),
                   ),
                   const SizedBox(height: 24),
-                  RehabSessionPanel(
-                    connection: _connection,
-                    rangesConfirmed: _confirmedRanges,
-                  ),
-                  const Divider(height: 40),
-                  Text(
-                    'Raw sensor diagnostics',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 16),
-                  if (readings != null) ...[
+                  if (readings == null) ...[
+                    const Icon(Icons.sensors_outlined, size: 40),
+                    const SizedBox(height: 12),
+                    const Text('No readings yet', textAlign: TextAlign.center),
+                    const SizedBox(height: 24),
+                  ] else ...[
                     _MotionReadings(
                       title: 'Thigh · MPU 0x69',
                       accel: readings.thighAccel,

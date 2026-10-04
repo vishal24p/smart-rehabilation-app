@@ -15,158 +15,6 @@ enum WearableStatus {
   unsupported,
 }
 
-enum RehabState {
-  setup('setup'),
-  heelUnloaded('heel_unloaded'),
-  heelLoaded('heel_loaded'),
-  standing('standing'),
-  movementReady('movement_ready'),
-  movement('movement'),
-  ready('ready'),
-  active('active'),
-  ended('ended'),
-  interrupted('interrupted'),
-  needsCalibration('needs_calibration');
-
-  const RehabState(this.wireName);
-  final String wireName;
-}
-
-double? _metric(Map<String, dynamic> json, String key, {bool signed = false}) {
-  if (!json.containsKey(key)) throw FormatException('Missing $key');
-  final value = json[key];
-  if (value == null) return null;
-  if (value is! num || !value.isFinite || (!signed && value < 0)) {
-    throw FormatException('Invalid $key');
-  }
-  return value.toDouble();
-}
-
-int? _cycles(Map<String, dynamic> json) {
-  final value = json['cycles'];
-  if (!json.containsKey('cycles') ||
-      (value != null && (value is! int || value < 0))) {
-    throw const FormatException('Invalid cycle count');
-  }
-  return value as int?;
-}
-
-class RehabSummary {
-  const RehabSummary._({
-    required this.cycles,
-    required this.romDeg,
-    required this.activeS,
-    required this.cycleTimesS,
-    required this.interrupted,
-  });
-  final int cycles;
-  final double? romDeg;
-  final double activeS;
-  final List<double> cycleTimesS;
-  final bool interrupted;
-
-  factory RehabSummary.fromJson(Map<String, dynamic> json) {
-    final cycles = _cycles(json);
-    final activeS = _metric(json, 'active_s');
-    final times = json['cycle_times_s'];
-    if (cycles == null ||
-        activeS == null ||
-        json['interrupted'] is! bool ||
-        times is! List ||
-        times.length != cycles ||
-        times.any((v) => v is! num || !v.isFinite || v < 0)) {
-      throw const FormatException('Invalid session summary');
-    }
-    return RehabSummary._(
-      cycles: cycles,
-      romDeg: _metric(json, 'rom_deg'),
-      activeS: activeS,
-      cycleTimesS: List<double>.unmodifiable(
-        times.map((v) => (v as num).toDouble()),
-      ),
-      interrupted: json['interrupted'] as bool,
-    );
-  }
-}
-
-class RehabAnalytics {
-  const RehabAnalytics._({
-    required this.state,
-    required this.reason,
-    required this.progress,
-    this.angleDeg,
-    this.romDeg,
-    this.cycles,
-    this.lastCycleS,
-    this.heelContact,
-    this.heelSaturated = false,
-    this.summary,
-  });
-  final RehabState state;
-  final String? reason;
-  final double progress;
-  final double? angleDeg, romDeg, lastCycleS;
-  final int? cycles;
-  final bool? heelContact;
-  final bool heelSaturated;
-  final RehabSummary? summary;
-
-  factory RehabAnalytics.fromJson(Map<String, dynamic> json) {
-    final state = RehabState.values
-        .where((s) => s.wireName == json['state'])
-        .firstOrNull;
-    final progress = _metric(json, 'progress');
-    final contact = json['heel_contact'];
-    final summary = json['summary'];
-    if (state == null ||
-        !json.containsKey('reason') ||
-        (json['reason'] != null && json['reason'] is! String) ||
-        progress == null ||
-        progress > 1 ||
-        !json.containsKey('heel_contact') ||
-        (contact != null && contact is! bool) ||
-        json['heel_saturated'] is! bool ||
-        !json.containsKey('summary') ||
-        (summary != null && summary is! Map<String, dynamic>)) {
-      throw const FormatException('Invalid rehab analytics');
-    }
-    return RehabAnalytics._(
-      state: state,
-      reason: json['reason'] as String?,
-      progress: progress,
-      angleDeg: _metric(json, 'angle_deg', signed: true),
-      romDeg: _metric(json, 'rom_deg'),
-      cycles: _cycles(json),
-      lastCycleS: _metric(json, 'last_cycle_s'),
-      heelContact: contact as bool?,
-      heelSaturated: json['heel_saturated'] as bool,
-      summary: summary == null
-          ? null
-          : RehabSummary.fromJson(summary as Map<String, dynamic>),
-    );
-  }
-
-  RehabAnalytics _withSummary(RehabSummary? value) => RehabAnalytics._(
-    state: state,
-    reason: reason,
-    progress: progress,
-    angleDeg: angleDeg,
-    romDeg: romDeg,
-    cycles: cycles,
-    lastCycleS: lastCycleS,
-    heelContact: heelContact,
-    heelSaturated: heelSaturated,
-    summary: value,
-  );
-
-  RehabAnalytics _unavailable(String reason) => RehabAnalytics._(
-    state: RehabState.interrupted,
-    reason: reason,
-    progress: 0,
-    summary: summary,
-  );
-}
-
 class SensorSample {
   const SensorSample({
     required this.timeUs,
@@ -256,17 +104,11 @@ class WearableConnection extends ChangeNotifier {
   var _status = WearableStatus.idle;
   var _message = 'Connect your wearable to start receiving readings.';
   SensorSample? _latest;
-  RehabAnalytics? _analytics;
-  var _commandPending = false;
-  String? _commandError;
   final _history = <HeelPoint>[];
 
   WearableStatus get status => _status;
   String get message => _message;
   SensorSample? get latest => _latest;
-  RehabAnalytics? get analytics => _analytics;
-  bool get commandPending => _commandPending;
-  String? get commandError => _commandError;
   List<HeelPoint> get history => List.unmodifiable(_history);
   bool get active => switch (_status) {
     WearableStatus.connecting ||
@@ -286,8 +128,6 @@ class WearableConnection extends ChangeNotifier {
       return;
     }
     final generation = ++_generation;
-    _commandPending = false;
-    _commandError = null;
     await _subscription?.cancel();
     if (_disposed || generation != _generation) return;
     _setStatus(WearableStatus.connecting, 'Connecting to REHAB-WEARABLE…');
@@ -345,9 +185,6 @@ class WearableConnection extends ChangeNotifier {
         );
       } else if (data['type'] == 'sample') {
         final sample = SensorSample.fromJson(data);
-        if (data.containsKey('analytics')) {
-          _acceptAnalytics(_decodeAnalytics(data['analytics']));
-        }
         if (sample.restart ||
             (_latest != null && sample.timeUs < _latest!.timeUs)) {
           _history.clear();
@@ -364,9 +201,6 @@ class WearableConnection extends ChangeNotifier {
           _history.removeRange(0, _history.length - 100);
         }
         notifyListeners();
-      } else if (data['type'] == 'analytics') {
-        _acceptAnalytics(_decodeAnalytics(data['analytics']));
-        notifyListeners();
       } else {
         throw const FormatException();
       }
@@ -375,58 +209,6 @@ class WearableConnection extends ChangeNotifier {
         WearableStatus.error,
         'Unsupported sensor data. Check the wearable firmware.',
       );
-    }
-  }
-
-  RehabAnalytics _decodeAnalytics(dynamic data) {
-    if (data is! Map<String, dynamic>) throw const FormatException();
-    return RehabAnalytics.fromJson(data);
-  }
-
-  void _acceptAnalytics(RehabAnalytics snapshot) {
-    _analytics = snapshot._withSummary(snapshot.summary ?? _analytics?.summary);
-  }
-
-  Future<void> sendSessionCommand(
-    String action, {
-    Map<String, dynamic>? config,
-  }) async {
-    if (_disposed || _commandPending) return;
-    if (_status != WearableStatus.live) {
-      _commandError = 'Connect and wait for live readings before calibration.';
-      notifyListeners();
-      return;
-    }
-    final generation = _generation;
-    _commandPending = true;
-    _commandError = null;
-    notifyListeners();
-    try {
-      await commands.invokeMethod<void>('sessionCommand', {
-        'action': action,
-        'config': ?config,
-      });
-      if (!_disposed &&
-          generation == _generation &&
-          action == 'start' &&
-          _analytics?.state == RehabState.active) {
-        _analytics = _analytics!._withSummary(null);
-      }
-    } on PlatformException catch (error) {
-      if (!_disposed && generation == _generation) {
-        _commandError =
-            error.message ??
-            'Session command failed. Check readings and retry.';
-      }
-    } on MissingPluginException {
-      if (!_disposed && generation == _generation) {
-        _commandError = 'Install the Android build with session support.';
-      }
-    } finally {
-      if (!_disposed && generation == _generation) {
-        _commandPending = false;
-        notifyListeners();
-      }
     }
   }
 
@@ -446,47 +228,29 @@ class WearableConnection extends ChangeNotifier {
     if (status != WearableStatus.live) {
       _latest = null;
       _history.clear();
-      _analytics = _analytics?._unavailable(message);
     }
     if (!_disposed) notifyListeners();
   }
 
   Future<void> disconnect() async {
     if (_disposed) return;
-    final generation = ++_generation;
-    _commandPending = false;
-    _commandError = null;
-    // Reconnect must cancel this listener before installing a new channel handler.
+    ++_generation;
     final subscription = _subscription;
+    _subscription = null;
     _setStatus(WearableStatus.disconnected, 'Wearable disconnected.');
-    final snapshot = await _stopNative();
-    if (!_disposed && generation == _generation && snapshot != null) {
-      try {
-        _acceptAnalytics(_decodeAnalytics(jsonDecode(snapshot)));
-        _analytics = _analytics!._unavailable(
-          'Readings stopped. Repeat calibration before starting.',
-        );
-        notifyListeners();
-      } on FormatException {
-        _commandError =
-            'Session summary unavailable. Repeat calibration after reconnecting.';
-        notifyListeners();
-      }
-    }
     await subscription?.cancel();
-    if (identical(_subscription, subscription)) _subscription = null;
+    await _stopNative();
   }
 
-  Future<String?> _stopNative() async {
-    if (!_android) return null;
+  Future<void> _stopNative() async {
+    if (!_android) return;
     try {
-      return await commands.invokeMethod<String>('disconnect');
+      await commands.invokeMethod<void>('disconnect');
     } on PlatformException {
       /* Local state is already disconnected. */
     } on MissingPluginException {
       /* No native worker exists on this platform. */
     }
-    return null;
   }
 
   Future<void> openWifiSettings() async {

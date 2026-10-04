@@ -24,20 +24,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "connect" -> { wearable.connect(call.argument<Boolean>("scaleConfirmed") ?: false); result.success(null) }
-                    "disconnect" -> wearable.disconnect { snapshot -> result.success(snapshot) }
-                    "sessionCommand" -> wearable.sessionCommand(call.arguments) { response ->
-                        response.fold(
-                            onSuccess = { result.success(null) },
-                            onFailure = { error ->
-                                val code = when (error) {
-                                    is IllegalArgumentException -> "invalid_session_command"
-                                    is RehabProcessing.UnavailableException -> "session_unavailable"
-                                    else -> "processing_failed"
-                                }
-                                result.error(code, error.message, null)
-                            },
-                        )
-                    }
+                    "disconnect" -> { wearable.disconnect(); result.success(null) }
                     "openWifiSettings" -> {
                         try { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)); result.success(null) }
                         catch (_: ActivityNotFoundException) { result.error("settings_unavailable", "Open Wi-Fi settings manually.", null) }
