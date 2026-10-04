@@ -63,6 +63,7 @@ class Rig:
     def calibration(self, peak=60):
         self.standing()
         self.processor.command('movement')
+        self.feed(seconds=0.35)
         for _ in range(2):
             self.ramp(peak)
             self.feed(peak)
@@ -121,11 +122,46 @@ class GeometryTest(unittest.TestCase):
         rig = Rig()
         rig.standing()
         rig.processor.command('movement')
+        rig.feed(seconds=0.35)
         rig.ramp(60)
         self.assertEqual(rig.processor.command('finish_movement')['state'], 'movement')
         rig.ramp(0)
         rig.feed(seconds=0.5)
         self.assertEqual(rig.processor.command('finish_movement')['state'], 'movement')
+
+    def test_movement_started_bent_requires_upright_then_two_complete_trials(self):
+        for sign in (1, -1):
+            with self.subTest(sign=sign):
+                rig = Rig()
+                rig.standing()
+                rig.ramp(sign * 50)
+                rig.processor.command('movement')
+                rig.feed(sign * 50, seconds=0.5)
+                rig.ramp(0)
+                rig.feed(seconds=0.5)
+                self.assertEqual(rig.processor.trials, [])
+                self.assertIsNone(rig.processor.polarity)
+                rig.cycle(sign * 60)
+                self.assertEqual(len(rig.processor.trials), 1)
+                self.assertEqual(rig.processor.command('finish_movement')['state'], 'movement')
+                rig.cycle(sign * 60)
+                result = rig.processor.command('finish_movement')
+                self.assertEqual(result['state'], 'ready')
+                self.assertAlmostEqual(rig.processor.bend_threshold, 36, delta=1)
+
+    def test_movement_before_first_post_command_sample_does_not_count(self):
+        rig = Rig()
+        rig.standing()
+        rig.processor.command('movement')
+        # This bend leaves upright before a 250ms confirmation is possible.
+        rig.ramp(60, seconds=0.5)
+        rig.feed(60)
+        rig.ramp(0)
+        rig.feed(seconds=0.5)
+        self.assertEqual(rig.processor.trials, [])
+        rig.cycle()
+        rig.cycle()
+        self.assertEqual(rig.processor.command('finish_movement')['state'], 'ready')
 
     def test_clipping_and_lost_gravity_invalidate_motion(self):
         for failure in ('clipped', 'projection', 'off_axis'):
@@ -232,6 +268,7 @@ class SessionTest(unittest.TestCase):
         rig = Rig()
         rig.standing()
         rig.processor.command('movement')
+        rig.feed(seconds=0.35)
         rig.cycle(35)
         rig.cycle(60)
         self.assertEqual(rig.processor.command('finish_movement')['state'], 'movement')
@@ -239,6 +276,7 @@ class SessionTest(unittest.TestCase):
         rig = Rig()
         rig.standing()
         rig.processor.command('movement')
+        rig.feed(seconds=0.35)
         rig.cycle(60)
         rig.ramp(-30)
         self.assertEqual(rig.processor.snapshot()['state'], 'needs_calibration')

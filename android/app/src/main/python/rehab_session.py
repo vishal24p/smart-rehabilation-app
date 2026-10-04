@@ -48,6 +48,7 @@ class SessionProcessor:
         self.polarity = None
         self.trials = []
         self.trial_peak, self.trial_return = 0.0, None
+        self.trial_armed, self.trial_upright_since = False, None
         self.motion_energy, self.off_energy = 0.0, 0.0
         self.bend_threshold, self.upright_band = None, None
         self.session_start = None
@@ -109,6 +110,7 @@ class SessionProcessor:
                 return self._error('Capture a stable standing reference first.')
             self.trials, self.polarity = [], None
             self.trial_peak, self.trial_return = 0.0, None
+            self.trial_armed, self.trial_upright_since = False, None
             self.motion_energy, self.off_energy = 0.0, 0.0
             self.state = 'movement'
         elif action == 'finish_movement':
@@ -154,6 +156,7 @@ class SessionProcessor:
         self.segments, self.angle, self.polarity = None, None, None
         self.motion_ready = False
         self.capture, self.trials = [], []
+        self.trial_armed, self.trial_upright_since = False, None
         self.progress = 0.0
         self._clear_cycle()
 
@@ -345,14 +348,25 @@ class SessionProcessor:
         self.off_energy += off_energy
         relative = _wrap((self.segments[0]['tilt']-self.segments[0]['reference'])
                          -(self.segments[1]['tilt']-self.segments[1]['reference']))
-        if self.state == 'movement' and self.polarity is None and abs(relative) > TRIAL_RETURN_DEG:
+        if (self.state == 'movement' and self.trial_armed
+                and self.polarity is None and abs(relative) > TRIAL_RETURN_DEG):
             self.polarity = 1 if relative > 0 else -1
         self.angle = relative * (self.polarity or 1)
-        if self.state == 'movement' and self.angle < -TRIAL_RETURN_DEG:
+        if (self.state == 'movement' and self.polarity is not None
+                and self.angle < -TRIAL_RETURN_DEG):
             return 'Bend direction inconsistent; check signed axes and repeat calibration.'
         return None
 
     def _movement(self, t: int):
+        if not self.trial_armed:
+            if abs(self.angle) <= TRIAL_RETURN_DEG:
+                if self.trial_upright_since is None:
+                    self.trial_upright_since = t
+                elif (t-self.trial_upright_since)/1e6 >= HOLD_S:
+                    self.trial_armed = True
+            else:
+                self.trial_upright_since = None
+            return
         if self.angle > TRIAL_RETURN_DEG:
             self.trial_peak = max(self.trial_peak, self.angle)
             self.trial_return = None
