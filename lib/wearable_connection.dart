@@ -103,7 +103,7 @@ class RehabAnalytics {
     this.summary,
   });
   final RehabState state;
-  final String reason;
+  final String? reason;
   final double progress;
   final double? angleDeg, romDeg, lastCycleS;
   final int? cycles;
@@ -119,7 +119,8 @@ class RehabAnalytics {
     final contact = json['heel_contact'];
     final summary = json['summary'];
     if (state == null ||
-        json['reason'] is! String ||
+        !json.containsKey('reason') ||
+        (json['reason'] != null && json['reason'] is! String) ||
         progress == null ||
         progress > 1 ||
         !json.containsKey('heel_contact') ||
@@ -131,7 +132,7 @@ class RehabAnalytics {
     }
     return RehabAnalytics._(
       state: state,
-      reason: json['reason'] as String,
+      reason: json['reason'] as String?,
       progress: progress,
       angleDeg: _metric(json, 'angle_deg', signed: true),
       romDeg: _metric(json, 'rom_deg'),
@@ -403,7 +404,7 @@ class WearableConnection extends ChangeNotifier {
     try {
       await commands.invokeMethod<void>('sessionCommand', {
         'action': action,
-        if (config != null) 'config': config,
+        'config': ?config,
       });
       if (!_disposed &&
           generation == _generation &&
@@ -455,8 +456,8 @@ class WearableConnection extends ChangeNotifier {
     final generation = ++_generation;
     _commandPending = false;
     _commandError = null;
+    // Reconnect must cancel this listener before installing a new channel handler.
     final subscription = _subscription;
-    _subscription = null;
     _setStatus(WearableStatus.disconnected, 'Wearable disconnected.');
     final snapshot = await _stopNative();
     if (!_disposed && generation == _generation && snapshot != null) {
@@ -473,6 +474,7 @@ class WearableConnection extends ChangeNotifier {
       }
     }
     await subscription?.cancel();
+    if (identical(_subscription, subscription)) _subscription = null;
   }
 
   Future<String?> _stopNative() async {

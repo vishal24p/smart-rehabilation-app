@@ -276,7 +276,9 @@ void main() {
       expect(connection.commandError, isNull);
       expect(connection.analytics!.cycles, 0);
       expect(connection.analytics!.summary, isNull);
-      await emit(sample(time: 11)..['analytics'] = analytics(state: 'active', cycles: 1));
+      await emit(
+        sample(time: 11)..['analytics'] = analytics(state: 'active', cycles: 1),
+      );
       expect(connection.analytics!.cycles, 1);
       expect(connection.latest!.timeUs, 11);
     },
@@ -371,8 +373,9 @@ void main() {
         );
     await connection.connect();
     final stopped = connection.disconnect();
-    await connection.connect();
+    final reconnected = connection.connect();
     gate.complete(null);
+    await reconnected;
     await stopped;
     expect(calls.last, 'connect');
     expect(connection.status, WearableStatus.connecting);
