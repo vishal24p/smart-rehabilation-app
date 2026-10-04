@@ -85,6 +85,7 @@ void main() {
   });
 
   test('analytics validates nullable metrics and immutable summary', () {
+    expect(RehabAnalytics.fromJson(analytics()..['reason'] = null).reason, isNull);
     final empty = RehabAnalytics.fromJson(analytics());
     expect(empty.angleDeg, isNull);
     expect(empty.cycles, isNull);
