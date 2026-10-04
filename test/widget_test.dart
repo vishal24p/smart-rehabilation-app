@@ -3,6 +3,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_monitor/main.dart';
 
 void main() {
+  testWidgets('opens live sensors separately from the sample review', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MyApp());
+    await tester.scrollUntilVisible(find.text('Live sensors'), 200);
+    await tester.drag(find.byType(ListView), const Offset(0, -160));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Live sensors'));
+    await tester.pumpAndSettle();
+    expect(find.text('No readings yet'), findsOneWidget);
+    expect(find.text('78%'), findsNothing);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, 1500));
+    await tester.pumpAndSettle();
+    expect(find.text('Today’s session'), findsOneWidget);
+  });
   testWidgets('shows a completed session review', (tester) async {
     final semantics = tester.ensureSemantics();
     await tester.pumpWidget(const MyApp());

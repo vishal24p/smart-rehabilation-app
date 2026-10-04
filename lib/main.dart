@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'grain_surface.dart';
+import 'live_sensor_screen.dart';
 
 const ink = Color(0xFF252B29);
 const muted = Color(0xFF656C68);
@@ -171,6 +172,13 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 4),
               for (final exercise in exercises) _ExerciseRow(exercise),
               const SizedBox(height: 20),
+              TextButton.icon(
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(builder: (_) => const LiveSensorScreen()),
+                ),
+                icon: const Icon(Icons.sensors_rounded),
+                label: const Text('Live sensors'),
+              ),
               const Text(
                 'Sample session · Sensors are not connected',
                 textAlign: TextAlign.center,
