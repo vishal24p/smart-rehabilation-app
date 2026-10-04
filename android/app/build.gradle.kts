@@ -6,9 +6,6 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Keep the explicit Python-compatible ABIs instead of Flutter's default ABI list.
-project.extensions.extraProperties["disable-abi-filtering"] = true
-
 android {
     namespace = "com.example.rehab_monitor"
     compileSdk = flutter.compileSdkVersion
@@ -29,6 +26,7 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         ndk {
+            abiFilters.clear()
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
@@ -59,4 +57,8 @@ chaquopy {
             buildPython("py", "-3.11")
         }
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
