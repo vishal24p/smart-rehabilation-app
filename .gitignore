@@ -5,3 +5,4 @@ __pycache__/
 *.py[cod]
 test/failures/
 android/.kotlin/
+.codegraph/
