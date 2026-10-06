@@ -389,6 +389,7 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
   String _instructions(RehabState state) => switch (state) {
     RehabState.setup =>
       'Verify setup, capture the heel baselines, then prepare your comfortable upright standing reference.',
+    RehabState.heelZero => 'Keep both heel sensors free of pressure.',
     RehabState.heelUnloaded =>
       _dualHeel
           ? 'Keep both heel sensors unloaded and still for two seconds.'

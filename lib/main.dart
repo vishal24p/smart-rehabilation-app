@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'exercise_reference.dart';
 import 'exercise_reference_screen.dart';
 import 'live_sensor_screen.dart';
+import 'settings_screen.dart';
 
 const ink = Color(0xFF252B29);
 const muted = Color(0xFF656C68);
@@ -91,11 +92,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selected = 0;
-  static const _labels = ['Exercises', 'Register', 'Sensors'];
+  static const _labels = ['Exercises', 'Register', 'Sensors', 'Settings'];
   static const _icons = [
     Icons.directions_walk_rounded,
     Icons.bookmark_outline_rounded,
     Icons.sensors_rounded,
+    Icons.settings_outlined,
   ];
 
   @override
@@ -103,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final page = switch (_selected) {
       1 => const ExerciseReferenceScreen(),
       2 => const LiveSensorScreen(),
+      3 => const SettingsScreen(),
       _ => const _Exercises(),
     };
     return LayoutBuilder(

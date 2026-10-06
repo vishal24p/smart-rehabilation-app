@@ -84,6 +84,21 @@ void main() {
     );
   });
 
+  test('zero capture payload is validated and retained in analytics', () {
+    final zero = {
+      'version': 1,
+      'adc_max': 1023,
+      'left': {'baseline': 12.0, 'deadband': 5.0},
+      'right': {'baseline': 11.0, 'deadband': 5.0},
+    };
+    final snapshot = analytics(state: 'heel_zero')..['heel_zero'] = zero;
+    expect(RehabAnalytics.fromJson(snapshot).heelZero, zero);
+    snapshot['heel_zero'] = 'bad';
+    expect(() => RehabAnalytics.fromJson(snapshot), throwsFormatException);
+    snapshot['heel_zero'] = {...zero, 'version': 2};
+    expect(() => RehabAnalytics.fromJson(snapshot), throwsFormatException);
+  });
+
   test(
     'legacy and dual heel samples retain independent readings and history',
     () async {

@@ -1,72 +1,36 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <WiFi.h>
+#include <ESP8266WiFi.h>
 
-// =====================================================
-// WIFI
-// =====================================================
-
+// Wi-Fi
 const char* WIFI_NAME = "REHAB-WEARABLE";
 const char* WIFI_PASSWORD = "rehab1234";
 
 WiFiServer server(5000);
 
-// =====================================================
-// PINS
-// =====================================================
+// I2C
+#define SDA_PIN 4  // D2
+#define SCL_PIN 5  // D1
 
-#define SDA_PIN 21
-#define SCL_PIN 22
-
-#define FSR_LEFT_PIN 34
-#define FSR_RIGHT_PIN 35
-
-// =====================================================
-// THIGH IMU
-// =====================================================
-
-// AD0 -> 3V3
 #define THIGH_ADDRESS 0x69
+#define SHIN_ADDRESS  0x68
+
+// FSR
+#define LEFT_FSR_PIN  14  // D5
+#define RIGHT_FSR_PIN 12  // D6
+#define FSR_ANALOG A0
 
 // 50 Hz
-#define SAMPLE_PERIOD_US 20000
-
-unsigned long lastSampleUs = 0;
-
-// =====================================================
-// IMU DATA
-// =====================================================
+#define SAMPLE_PERIOD_MS 20
 
 struct IMUData {
   int16_t ax;
   int16_t ay;
   int16_t az;
-
   int16_t gx;
   int16_t gy;
   int16_t gz;
 };
-
-// =====================================================
-// WRITE REGISTER
-// =====================================================
-
-bool writeRegister(
-  uint8_t address,
-  uint8_t reg,
-  uint8_t value
-) {
-  Wire.beginTransmission(address);
-
-  Wire.write(reg);
-  Wire.write(value);
-
-  return Wire.endTransmission() == 0;
-}
-
-// =====================================================
-// READ REGISTERS
-// =====================================================
 
 bool readRegisters(
   uint8_t address,
@@ -75,18 +39,13 @@ bool readRegisters(
   uint8_t count
 ) {
   Wire.beginTransmission(address);
-
   Wire.write(reg);
 
   if (Wire.endTransmission(false) != 0) {
     return false;
   }
 
-  int received = Wire.requestFrom(
-    (int)address,
-    (int)count,
-    (int)true
-  );
+  uint8_t received = Wire.requestFrom(address, count);
 
   if (received != count) {
     return false;
@@ -99,334 +58,236 @@ bool readRegisters(
   return true;
 }
 
-// =====================================================
-// INITIALIZE THIGH IMU
-// =====================================================
+bool writeRegister(
+  uint8_t address,
+  uint8_t reg,
+  uint8_t value
+) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  Wire.write(value);
 
-bool initializeThigh() {
+  return Wire.endTransmission() == 0;
+}
 
+bool initializeMPU(uint8_t address) {
   uint8_t who = 0;
 
-  if (!readRegisters(
-        THIGH_ADDRESS,
-        0x75,
-        &who,
-        1
-      )) {
-
+  if (!readRegisters(address, 0x75, &who, 1)) {
     return false;
   }
-
-  Serial.print("THIGH WHO_AM_I = 0x");
-  Serial.println(who, HEX);
 
   if (who != 0x68 && who != 0x70) {
     return false;
   }
 
-  // Reset
-  if (!writeRegister(
-        THIGH_ADDRESS,
-        0x6B,
-        0x80
-      )) {
-
+  // Reset MPU
+  if (!writeRegister(address, 0x6B, 0x80)) {
     return false;
   }
 
-  delay(200);
+  delay(100);
 
-  // Wake
-  if (!writeRegister(
-        THIGH_ADDRESS,
-        0x6B,
-        0x01
-      )) {
-
+  // Wake MPU
+  if (!writeRegister(address, 0x6B, 0x01)) {
     return false;
   }
 
   // Enable axes
-  writeRegister(
-    THIGH_ADDRESS,
-    0x6C,
-    0x00
-  );
+  writeRegister(address, 0x6C, 0x00);
 
-  // Low pass filter
-  writeRegister(
-    THIGH_ADDRESS,
-    0x1A,
-    0x03
-  );
+  // Low-pass filter
+  writeRegister(address, 0x1A, 0x03);
 
-  // Gyro ±250 dps
-  writeRegister(
-    THIGH_ADDRESS,
-    0x1B,
-    0x00
-  );
+  // Gyroscope: +/-250 degrees per second
+  writeRegister(address, 0x1B, 0x00);
 
-  // Accel ±2g
-  writeRegister(
-    THIGH_ADDRESS,
-    0x1C,
-    0x00
-  );
+  // Accelerometer: +/-2g
+  writeRegister(address, 0x1C, 0x00);
 
-  delay(100);
+  delay(50);
 
   return true;
 }
 
-// =====================================================
-// READ THIGH
-// =====================================================
-
-bool readThigh(IMUData &imu) {
-
+bool readMPU(uint8_t address, IMUData &imu) {
   uint8_t data[14];
 
-  if (!readRegisters(
-        THIGH_ADDRESS,
-        0x3B,
-        data,
-        14
-      )) {
-
+  if (!readRegisters(address, 0x3B, data, 14)) {
     return false;
   }
 
-  imu.ax =
-    (int16_t)(
-      (uint16_t(data[0]) << 8) |
-      data[1]
-    );
+  imu.ax = (int16_t)(((uint16_t)data[0] << 8) | data[1]);
+  imu.ay = (int16_t)(((uint16_t)data[2] << 8) | data[3]);
+  imu.az = (int16_t)(((uint16_t)data[4] << 8) | data[5]);
 
-  imu.ay =
-    (int16_t)(
-      (uint16_t(data[2]) << 8) |
-      data[3]
-    );
-
-  imu.az =
-    (int16_t)(
-      (uint16_t(data[4]) << 8) |
-      data[5]
-    );
-
-  // Skip temperature data[6], data[7]
-
-  imu.gx =
-    (int16_t)(
-      (uint16_t(data[8]) << 8) |
-      data[9]
-    );
-
-  imu.gy =
-    (int16_t)(
-      (uint16_t(data[10]) << 8) |
-      data[11]
-    );
-
-  imu.gz =
-    (int16_t)(
-      (uint16_t(data[12]) << 8) |
-      data[13]
-    );
+  // Skip temperature bytes 6 and 7.
+  imu.gx = (int16_t)(((uint16_t)data[8] << 8) | data[9]);
+  imu.gy = (int16_t)(((uint16_t)data[10] << 8) | data[11]);
+  imu.gz = (int16_t)(((uint16_t)data[12] << 8) | data[13]);
 
   return true;
 }
 
-// =====================================================
-// SETUP
-// =====================================================
+int readLeftFSR() {
+  digitalWrite(LEFT_FSR_PIN, HIGH);
+  digitalWrite(RIGHT_FSR_PIN, LOW);
+
+  delayMicroseconds(100);
+
+  return analogRead(FSR_ANALOG);
+}
+
+int readRightFSR() {
+  digitalWrite(LEFT_FSR_PIN, LOW);
+  digitalWrite(RIGHT_FSR_PIN, HIGH);
+
+  delayMicroseconds(100);
+
+  return analogRead(FSR_ANALOG);
+}
 
 void setup() {
-
   Serial.begin(115200);
-
   delay(1500);
 
-  // I2C
-  Wire.begin(
-    SDA_PIN,
-    SCL_PIN
-  );
-
+  Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(100000);
-  Wire.setTimeOut(50);
 
-  // Thigh sensor
-  if (initializeThigh()) {
+  Serial.println();
+  Serial.println("==============================");
+  Serial.println("REHAB WEARABLE");
+  Serial.println("ESP-12E SENSOR SYSTEM");
+  Serial.println("==============================");
 
-    Serial.println(
-      "THIGH IMU READY"
-    );
-
+  if (initializeMPU(THIGH_ADDRESS)) {
+    Serial.println("THIGH MPU 0x69 : READY");
   } else {
-
-    Serial.println(
-      "ERROR: THIGH IMU NOT FOUND"
-    );
+    Serial.println("THIGH MPU 0x69 : ERROR");
   }
 
-  // FSR
-  analogReadResolution(12);
+  if (initializeMPU(SHIN_ADDRESS)) {
+    Serial.println("SHIN MPU 0x68 : READY");
+  } else {
+    Serial.println("SHIN MPU 0x68 : ERROR");
+  }
 
-  pinMode(
-    FSR_LEFT_PIN,
-    INPUT
-  );
+  pinMode(LEFT_FSR_PIN, OUTPUT);
+  pinMode(RIGHT_FSR_PIN, OUTPUT);
 
-  pinMode(
-    FSR_RIGHT_PIN,
-    INPUT
-  );
+  digitalWrite(LEFT_FSR_PIN, LOW);
+  digitalWrite(RIGHT_FSR_PIN, LOW);
 
-  // WiFi
   WiFi.mode(WIFI_AP);
-
-  WiFi.softAP(
-    WIFI_NAME,
-    WIFI_PASSWORD
-  );
+  WiFi.softAP(WIFI_NAME, WIFI_PASSWORD);
 
   delay(500);
 
   Serial.println();
+  Serial.println("==============================");
+  Serial.println("WIFI READY");
+  Serial.println("==============================");
 
-  Serial.print("WiFi: ");
+  Serial.print("NETWORK: ");
   Serial.println(WIFI_NAME);
 
-  Serial.print("Password: ");
+  Serial.print("PASSWORD: ");
   Serial.println(WIFI_PASSWORD);
 
-  Serial.print("IP: ");
-  Serial.println(
-    WiFi.softAPIP()
-  );
+  Serial.print("DEVICE IP: ");
+  Serial.println(WiFi.softAPIP());
 
-  // TCP server
   server.begin();
 
-  Serial.println(
-    "TCP PORT: 5000"
-  );
-
-  Serial.println(
-    "Waiting for Python..."
-  );
+  Serial.println("DATA SERVER READY");
+  Serial.println("WAITING FOR MOBILE APP...");
+  Serial.println("==============================");
 }
 
-// =====================================================
-// LOOP
-// =====================================================
-
 void loop() {
-
-  WiFiClient client =
-    server.available();
+  WiFiClient client = server.available();
 
   if (!client) {
-
-    delay(20);
-
+    delay(10);
     return;
   }
 
-  Serial.println(
-    "PYTHON CONNECTED"
-  );
+  Serial.println();
+  Serial.println("MOBILE APP CONNECTED");
 
-  // CSV HEADER
+  // Exact CSV header supported by your application.
   client.println(
     "time_us,"
     "thigh_ax,thigh_ay,thigh_az,"
     "thigh_gx,thigh_gy,thigh_gz,"
+    "shin_ax,shin_ay,shin_az,"
+    "shin_gx,shin_gy,shin_gz,"
     "fsr_left,fsr_right"
   );
 
-  lastSampleUs =
-    micros();
+  unsigned long lastTime = millis();
 
   while (client.connected()) {
-
-    unsigned long now =
-      micros();
-
-    if (
-      now - lastSampleUs
-      < SAMPLE_PERIOD_US
-    ) {
-
+    if (millis() - lastTime < SAMPLE_PERIOD_MS) {
       delay(1);
-
       continue;
     }
 
-    lastSampleUs = now;
+    lastTime = millis();
 
     IMUData thigh;
+    bool thighOK = readMPU(THIGH_ADDRESS, thigh);
 
-    bool thighOK =
-      readThigh(thigh);
+    IMUData shin;
+    bool shinOK = readMPU(SHIN_ADDRESS, shin);
 
-    int fsrLeft =
-      analogRead(FSR_LEFT_PIN);
+    int leftFSR = readLeftFSR();
+    int rightFSR = readRightFSR();
 
-    int fsrRight =
-      analogRead(FSR_RIGHT_PIN);
-
-    // ===============================================
-    // SEND DATA
-    // ===============================================
-
-    client.print(now);
+    // Application expects microseconds, not milliseconds.
+    client.print(micros());
     client.print(",");
 
     if (thighOK) {
-
       client.print(thigh.ax);
       client.print(",");
-
       client.print(thigh.ay);
       client.print(",");
-
       client.print(thigh.az);
       client.print(",");
-
       client.print(thigh.gx);
       client.print(",");
-
       client.print(thigh.gy);
       client.print(",");
-
       client.print(thigh.gz);
-
     } else {
-
-      client.print(
-        "0,0,0,0,0,0"
-      );
+      client.print("0,0,0,0,0,0");
     }
 
     client.print(",");
 
-    client.print(
-      fsrLeft
-    );
+    if (shinOK) {
+      client.print(shin.ax);
+      client.print(",");
+      client.print(shin.ay);
+      client.print(",");
+      client.print(shin.az);
+      client.print(",");
+      client.print(shin.gx);
+      client.print(",");
+      client.print(shin.gy);
+      client.print(",");
+      client.print(shin.gz);
+    } else {
+      client.print("0,0,0,0,0,0");
+    }
 
     client.print(",");
-
-    client.println(
-      fsrRight
-    );
+    client.print(leftFSR);
+    client.print(",");
+    client.println(rightFSR);
   }
 
   client.stop();
-
-  Serial.println(
-    "PYTHON DISCONNECTED"
-  );
+  Serial.println("MOBILE APP DISCONNECTED");
 }

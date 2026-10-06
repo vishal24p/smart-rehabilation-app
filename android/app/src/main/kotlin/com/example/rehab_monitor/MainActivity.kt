@@ -39,6 +39,18 @@ class MainActivity : FlutterActivity() {
                             )
                         }
                     }
+                    "getSettings", "saveSettings" -> referenceWorker.execute {
+                        val response = runCatching {
+                            if (call.method == "getSettings") references.loadSettings()
+                            else references.saveSettings(call.arguments)
+                        }
+                        runOnUiThread {
+                            response.fold(
+                                onSuccess = { result.success(it) },
+                                onFailure = { result.error("settings_storage_failed", "Could not load or save settings. Retry.", null) },
+                            )
+                        }
+                    }
                     "connect" -> { wearable.connect(call.argument<Boolean>("scaleConfirmed") ?: false); result.success(null) }
                     "disconnect" -> wearable.disconnect { snapshot -> result.success(snapshot) }
                     "sessionCommand" -> wearable.sessionCommand(call.arguments) { response ->

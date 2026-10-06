@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'exercise_reference.dart';
+import 'app_settings.dart';
 
 enum WearableStatus {
   idle,
@@ -18,6 +19,7 @@ enum WearableStatus {
 
 enum RehabState {
   setup('setup'),
+  heelZero('heel_zero'),
   heelUnloaded('heel_unloaded'),
   heelLoaded('heel_loaded'),
   standing('standing'),
@@ -113,6 +115,7 @@ class RehabAnalytics {
     this.heelShareRight,
     this.heelShareLeft,
     this.heelShareReason,
+    this.heelZero,
     this.summary,
     this.thigh,
   });
@@ -127,6 +130,7 @@ class RehabAnalytics {
   final bool leftHeelSaturated;
   final double? heelShareRight, heelShareLeft;
   final String? heelShareReason;
+  final Map<String, dynamic>? heelZero;
   final RehabSummary? summary;
   final ThighAnalytics? thigh;
 
@@ -158,7 +162,9 @@ class RehabAnalytics {
         (shareRight != null && (shareRight + shareLeft! - 100).abs() > 0.01) ||
         !json.containsKey('summary') ||
         (summary != null && summary is! Map<String, dynamic>) ||
-        (thigh != null && thigh is! Map<String, dynamic>)) {
+        (thigh != null && thigh is! Map<String, dynamic>) ||
+        (json['heel_zero'] != null &&
+            json['heel_zero'] is! Map<String, dynamic>)) {
       throw const FormatException('Invalid rehab analytics');
     }
     return RehabAnalytics._(
@@ -176,6 +182,11 @@ class RehabAnalytics {
       heelShareRight: shareRight,
       heelShareLeft: shareLeft,
       heelShareReason: shareReason as String?,
+      heelZero: json['heel_zero'] == null
+          ? null
+          : validateHeelZero(
+              Map<String, dynamic>.from(json['heel_zero'] as Map),
+            ),
       summary: summary == null
           ? null
           : RehabSummary.fromJson(summary as Map<String, dynamic>),
@@ -200,6 +211,7 @@ class RehabAnalytics {
     heelShareRight: heelShareRight,
     heelShareLeft: heelShareLeft,
     heelShareReason: heelShareReason,
+    heelZero: heelZero,
     summary: value,
     thigh: thigh,
   );

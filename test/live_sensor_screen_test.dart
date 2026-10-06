@@ -25,7 +25,12 @@ void main() {
   setUp(() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(fixtures.commands, (_) async => null);
+    messenger.setMockMethodCallHandler(
+      fixtures.commands,
+      (call) async => call.method == 'getSettings'
+          ? {'injured_leg': 'left', 'heel_zero': null}
+          : null,
+    );
     messenger.setMockMethodCallHandler(
       const MethodChannel('rehab/wearable/events'),
       (_) async => null,
@@ -41,10 +46,11 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: LiveSensorScreen(connection: connection)),
     );
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('No sensors connected'), 100);
     expect(heelShare('Left', '—'), findsOneWidget);
     expect(heelShare('Right', '—'), findsOneWidget);
-    expect(find.bySemanticsLabel('Left unavailable'), findsOneWidget);
+    expect(find.bySemanticsLabel('Left unavailable, injured leg'), findsOneWidget);
     await connection.connect();
     await tester.runAsync(
       () => fixtures.emit(
@@ -143,60 +149,39 @@ void main() {
     },
   );
 
-  testWidgets('live ADC shares need no captures and respect invalid signals', (
+  testWidgets('uncalibrated baseline never becomes a fake fifty percent', (
     tester,
   ) async {
     await tester.pumpWidget(
       MaterialApp(home: LiveSensorScreen(connection: connection)),
     );
     await connection.connect();
-    var time = 1;
-    Future<void> readings(int? left, int right, {String? reason}) async {
-      await tester.runAsync(
-        () => fixtures.emit(
-          Map<String, Object?>.from(fixtures.sample(time: time++))
-            ..['fsr_left'] = left
-            ..['fsr'] = right
-            ..['analytics'] = (fixtures.analytics()
-              ..['heel_share_reason'] =
-                  reason ?? 'Capture unloaded and loaded heels first'),
-        ),
-      );
-      await tester.pump();
-    }
-
-    await readings(800, 1200);
+    await tester.runAsync(
+      () => fixtures.emit(
+        Map<String, Object?>.from(fixtures.sample())
+          ..['fsr_left'] = 12
+          ..['fsr'] = 12,
+      ),
+    );
+    await tester.pump();
     await tester.scrollUntilVisible(
-      heelShare('Left', '40%'),
+      heelShare('Left', '—'),
       100,
       maxScrolls: 80,
     );
-    expect(heelShare('Right', '60%'), findsOneWidget);
-    expect(find.text('Higher signal: right'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Sensor signal share'), 100);
-    expect(find.text('Sensor signal share'), findsOneWidget);
-    expect(find.textContaining('4095'), findsNothing);
-    expect(find.textContaining('Live FSR readings'), findsNothing);
-    await readings(1200, 800);
-    expect(heelShare('Left', '60%'), findsOneWidget);
-    expect(find.text('Higher signal: left'), findsOneWidget);
-    await readings(0, 1000, reason: 'Heel ADC saturated');
-    expect(heelShare('Left', '0%'), findsOneWidget);
-    expect(heelShare('Right', '100%'), findsOneWidget);
-    await readings(0, 0, reason: 'Heel ADC saturated');
-    expect(find.text('No heel signal'), findsOneWidget);
-    expect(find.textContaining('Higher signal:'), findsNothing);
-    await readings(4095, 1000, reason: 'Heel ADC saturated');
-    expect(find.text('Sensor limit reached'), findsOneWidget);
-    await readings(null, 1000);
-    expect(find.text('Left sensor unavailable'), findsOneWidget);
-    await readings(800, 1200, reason: 'No load detected');
+    expect(heelShare('Right', '—'), findsOneWidget);
+    expect(heelShare('Left', '50%'), findsNothing);
+    expect(find.text('Injured leg'), findsOneWidget);
+    await tester.runAsync(
+      () => fixtures.emit({
+        'type': 'analytics',
+        'analytics': fixtures.analytics()
+          ..['heel_share_reason'] = 'No load detected',
+      }),
+    );
+    await tester.pump();
     await tester.scrollUntilVisible(find.text('No load detected'), 100);
     expect(find.text('No load detected'), findsOneWidget);
-    expect(heelShare('Left', '40%'), findsNothing);
-    await tester.runAsync(() => connection.disconnect());
-    await tester.pump();
-    expect(find.textContaining('Live FSR readings'), findsNothing);
   });
 
   testWidgets('loading estimate follows displayed shares and clears', (
@@ -220,7 +205,7 @@ void main() {
       await tester.pump();
       final label = left.round() == 50
           ? 'Equal shares'
-          : 'Higher estimate: ${left > 50 ? 'left' : 'right'}';
+          : 'Higher signal: ${left > 50 ? 'left' : 'right'}';
       await tester.scrollUntilVisible(find.text(label), 100, maxScrolls: 80);
       await tester.scrollUntilVisible(
         heelShare('Left', '${left.round()}%'),
@@ -239,11 +224,11 @@ void main() {
       }),
     );
     await tester.pump();
-    expect(find.textContaining('Higher estimate:'), findsNothing);
+    expect(find.textContaining('Higher signal:'), findsNothing);
     expect(find.text('Equal shares'), findsNothing);
     await tester.runAsync(() => connection.disconnect());
     await tester.pump();
-    expect(find.textContaining('Higher estimate:'), findsNothing);
+    expect(find.textContaining('Higher signal:'), findsNothing);
   });
 
   testWidgets(
@@ -320,7 +305,12 @@ void main() {
       maxScrolls: 80,
     );
     expect(heelShare('Right', '60%'), findsOneWidget);
-    expect(find.text('Baseline-adjusted signal share'), findsOneWidget);
+    expect(
+      find.text(
+        'Baseline-adjusted heel-signal share. Not body-weight percentage.',
+      ),
+      findsOneWidget,
+    );
     expect(find.byType(TextField), findsNothing);
     expect(find.textContaining('4095'), findsNothing);
     await tester.runAsync(
@@ -364,6 +354,8 @@ void main() {
       -200,
       maxScrolls: 80,
     );
+    await tester.drag(find.byType(ListView), const Offset(0, 3000));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Connect wearable'));
     await tester.pump();
     await tester.runAsync(() => fixtures.emit(fixtures.sample()));

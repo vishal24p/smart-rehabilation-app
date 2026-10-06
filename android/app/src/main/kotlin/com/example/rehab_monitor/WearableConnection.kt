@@ -14,6 +14,8 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.view.WindowManager
 import com.chaquo.python.PyException
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
@@ -40,6 +42,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     fun connect(scaleConfirmed: Boolean) {
         if (active) { status("error", "connection_busy", "Disconnect before starting another connection."); return }
         active = true
+        activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         generation++
         stoppedSnapshot = null
         processing = RehabProcessing({ pythonProcessor(scaleConfirmed) }, { main.post(it) })
@@ -86,18 +89,11 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 if (active && token == generation && stream == null) startStream(network, token)
             }.let { Unit }
             override fun onUnavailable() = main.post {
-                if (active && token == generation) fail("network_unavailable", "Power on the wearable and approve its Wi-Fi connection, then retry.")
+                retryNetwork(token, "Wearable Wi-Fi unavailable. Power on the wearable; reconnecting…")
             }.let { Unit }
             override fun onLost(network: Network) = main.post {
                 if (active && token == generation && selectedNetwork == network) {
-                    generation++
-                    val nextToken = generation
-                    processing?.interrupt("Wearable Wi-Fi disconnected.") { result ->
-                        if (active && nextToken == generation) result.getOrNull()?.let { analytics(it) }
-                    }
-                    releaseResources()
-                    status("reconnecting", "network_lost", "Wearable Wi-Fi disconnected. Reconnecting…")
-                    main.postDelayed({ requestNetwork(nextToken) }, longArrayOf(1000, 2000, 5000)[minOf(networkRetry++, 2)])
+                    retryNetwork(token, "Wearable Wi-Fi disconnected. Reconnecting…")
                 }
             }.let { Unit }
         }
@@ -117,6 +113,17 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         } catch (_: RuntimeException) {
             fail("network_unavailable", "Wi-Fi connection could not start. Open Wi-Fi settings and retry.")
         }
+    }
+
+    private fun retryNetwork(token: Long, message: String) {
+        if (!active || token != generation) return
+        val nextToken = ++generation
+        processing?.interrupt(message) { result ->
+            if (active && nextToken == generation) result.getOrNull()?.let { analytics(it) }
+        }
+        releaseResources()
+        status("reconnecting", "network_lost", message)
+        main.postDelayed({ requestNetwork(nextToken) }, longArrayOf(1000, 2000, 5000)[minOf(networkRetry++, 2)])
     }
 
     private fun startStream(network: Network, token: Long) {
@@ -144,6 +151,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 val socketToken = socketGeneration.get()
                 queue.dispatchCurrent(socketToken) {
                     if (active && token == generation && queue === processing) {
+                        if (payload.contains("\"type\":\"sample\"")) networkRetry = 0
                         event(payload)
                         if (payload.contains("\"status\":\"error\"")) {
                             finishConnection("Sensor stream stopped.")
@@ -183,6 +191,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     }
 
     private fun finishConnection(reason: String, finalStatus: () -> Unit = {}, completion: (String?) -> Unit = {}) {
+        activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val pendingClose = closing
         if (!active && processing == null && pendingClose != null) {
             val token = generation
@@ -234,7 +243,17 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         return object : RehabProcessing.Processor {
             private var parser: PyObject? = null
             private fun encode(snapshot: PyObject) = json.callAttr("dumps", snapshot).toString()
-            override fun newParser() { parser = sensor.callAttr("SensorParser", scaleConfirmed, session) }
+            override fun newParser() {
+                try {
+                    parser = sensor.callAttr("SensorParser", scaleConfirmed, session)
+                    val store = ExerciseReferenceStore(activity.applicationContext)
+                    val zero = try { store.loadSettings()["heel_zero"] } finally { store.close() }
+                    if (zero != null) restoreHeelZero(session, json, zero as Map<*, *>)
+                } catch (error: RuntimeException) {
+                    Log.e("RehabWearable", "Could not initialize sensor processing", error)
+                    throw error
+                }
+            }
             override fun parse(line: String): String? = try { parser!!.callAttr("process_line", line)?.toString() }
                 catch (error: PyException) { throw WearableStream.ProtocolException(error.message ?: "Invalid CSV header") }
             override fun command(action: String, config: Map<*, *>?): String {
@@ -249,5 +268,15 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     private fun status(state: String, code: String, message: String) = event(JSONObject()
         .put("type", "status").put("status", state).put("code", code).put("message", message).toString())
 
-    companion object { const val PERMISSION_REQUEST = 6401 }
+    companion object {
+        const val PERMISSION_REQUEST = 6401
+
+        internal fun restoreHeelZero(session: PyObject, json: PyObject, zero: Map<*, *>) {
+            val validated = AppSettingsPayload.validateHeelZero(zero)
+            val config = json.callAttr("loads", JSONObject(validated).toString())
+            val restored = session.callAttr("command", "heel_restore", config)
+            // PyObject.get reads an attribute; Python dict keys require dict.get.
+            check(restored.callAttr("get", "heel_zero") != null) { "Stored heel baseline could not be restored." }
+        }
+    }
 }

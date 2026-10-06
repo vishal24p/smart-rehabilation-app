@@ -5,6 +5,7 @@ import 'wearable_connection.dart';
 import 'rehab_session_panel.dart';
 import 'thigh_session_panel.dart';
 import 'exercise_reference.dart';
+import 'app_settings.dart';
 
 class LiveSensorScreen extends StatefulWidget {
   const LiveSensorScreen({this.connection, this.exerciseId, super.key});
@@ -19,12 +20,31 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
     with WidgetsBindingObserver {
   late final WearableConnection _connection;
   var _confirmedRanges = false;
+  String? _injuredLeg;
+  String? _settingsError;
 
   @override
   void initState() {
     super.initState();
     _connection = widget.connection ?? WearableConnection();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadSettings());
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await const AppSettingsStore().load();
+      if (mounted) {
+        setState(() {
+          _injuredLeg = settings.injuredLeg;
+          _settingsError = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _settingsError = 'Could not load injured-leg setting.');
+      }
+    }
   }
 
   @override
@@ -63,26 +83,7 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
             builder: (context, _) {
               final readings = _connection.latest;
               final analytics = _connection.analytics;
-              final rawLeft = readings?.fsrLeft;
-              final rawRight = readings?.fsr;
-              final uncalibrated =
-                  analytics?.heelShareLeft == null &&
-                  (analytics?.heelShareReason == null ||
-                      analytics?.heelShareReason == 'Heel ADC saturated' ||
-                      analytics?.heelShareReason ==
-                          'Capture unloaded and loaded heels first');
-              final rawTotal = (rawLeft ?? 0) + (rawRight ?? 0);
-              final rawValid =
-                  rawLeft != null &&
-                  rawRight != null &&
-                  rawLeft < 4095 &&
-                  rawRight < 4095 &&
-                  rawTotal > 0;
-              final leftShare =
-                  analytics?.heelShareLeft?.round() ??
-                  (uncalibrated && rawValid
-                      ? (100 * rawLeft / rawTotal).round()
-                      : null);
+              final leftShare = analytics?.heelShareLeft?.round();
               final active = _connection.active;
               final status = switch (_connection.status) {
                 WearableStatus.idle => 'Ready to connect',
@@ -225,11 +226,12 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const Text('Right heel'),
+                      Text('ADC: ${readings?.fsr ?? '—'} / 1023'),
                       const SizedBox(height: 12),
                       Semantics(
                         label: _connection.history.isEmpty
                             ? 'Heel ADC graph has no live readings.'
-                            : 'Heel ADC graph. ${_connection.history.length} recent readings; latest ${_connection.history.last.adc} out of 4095.',
+                            : 'Heel ADC graph. ${_connection.history.length} recent readings; latest ${_connection.history.last.adc} out of 1023.',
                         child: SizedBox(
                           height: 140,
                           child: _connection.history.isEmpty
@@ -259,10 +261,11 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                           'Left heel ADC · last 10 seconds',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
+                        Text('ADC: ${readings!.fsrLeft} / 1023'),
                         const SizedBox(height: 12),
                         Semantics(
                           label:
-                              'Left heel ADC graph. Latest ${readings!.fsrLeft} out of 4095.',
+                              'Left heel ADC graph. Latest ${readings.fsrLeft} out of 1023.',
                           child: SizedBox(
                             height: 140,
                             child: CustomPaint(
@@ -311,7 +314,7 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                           child: Semantics(
                             container: true,
                             label:
-                                '${side.$1} ${side.$2 == null ? 'unavailable' : '${side.$2}%'}',
+                                '${side.$1} ${side.$2 == null ? 'unavailable' : '${side.$2}%'}${_injuredLeg == side.$1.toLowerCase() ? ', injured leg' : ''}',
                             excludeSemantics: true,
                             child: Column(
                               key: ValueKey(
@@ -324,6 +327,8 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                                     context,
                                   ).textTheme.headlineSmall,
                                 ),
+                                if (_injuredLeg == side.$1.toLowerCase())
+                                  const Text('Injured leg'),
                                 const SizedBox(height: 8),
                                 FittedBox(
                                   fit: BoxFit.scaleDown,
@@ -345,27 +350,27 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                     Text(
                       leftShare == 50
                           ? 'Equal shares'
-                          : '${uncalibrated ? 'Higher signal' : 'Higher estimate'}: ${leftShare > 50 ? 'left' : 'right'}',
+                          : 'Higher signal: ${leftShare > 50 ? 'left' : 'right'}',
                     ),
                   ] else
                     Text(
                       readings == null
                           ? 'No sensors connected'
-                          : uncalibrated
-                          ? rawLeft == null
-                                ? 'Left sensor unavailable'
-                                : rawLeft == 4095 || rawRight == 4095
-                                ? 'Sensor limit reached'
-                                : 'No heel signal'
+                          : analytics?.heelShareReason ==
+                                'Capture unloaded and loaded heels first'
+                          ? 'Capture unloaded sensors in Settings first'
                           : analytics?.heelShareReason ??
-                                'Heel comparison unavailable',
+                                'Capture unloaded sensors in Settings first',
                     ),
                   const SizedBox(height: 8),
-                  Text(
-                    uncalibrated
-                        ? 'Sensor signal share'
-                        : 'Baseline-adjusted signal share',
+                  const Text(
+                    'Baseline-adjusted heel-signal share. Not body-weight percentage.',
                   ),
+                  if (_settingsError != null)
+                    TextButton(
+                      onPressed: _loadSettings,
+                      child: Text('$_settingsError Retry'),
+                    ),
                 ],
               );
             },
@@ -458,7 +463,7 @@ class _HeelGraph extends CustomPainter {
             1.0,
           ) *
           size.width;
-      final y = (1 - adc / 4095) * size.height;
+      final y = (1 - (adc / 1023).clamp(0.0, 1.0)) * size.height;
       if (!connected) {
         path.moveTo(x, y);
       } else {
@@ -470,7 +475,7 @@ class _HeelGraph extends CustomPainter {
     final latest = left ? points.last.leftAdc : points.last.adc;
     if (latest != null) {
       canvas.drawCircle(
-        Offset(size.width, (1 - latest / 4095) * size.height),
+        Offset(size.width, (1 - (latest / 1023).clamp(0.0, 1.0)) * size.height),
         3,
         Paint()..color = color,
       );

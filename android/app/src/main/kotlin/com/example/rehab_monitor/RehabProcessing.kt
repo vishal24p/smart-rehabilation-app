@@ -137,7 +137,7 @@ class RehabProcessing(
     catch (error: ExecutionException) { throw (error.cause ?: error) }
 
     companion object {
-        private val actions = setOf("configure", "heel_unloaded", "heel_loaded", "standing", "movement",
+        private val actions = setOf("configure", "heel_unloaded", "heel_loaded", "heel_zero", "standing", "movement",
             "finish_movement", "start", "end", "retry", "thigh_reference_begin", "thigh_reference_finish",
             "thigh_session_begin", "thigh_session_end", "thigh_cancel")
 
@@ -147,6 +147,7 @@ class RehabProcessing(
             require(action is String && action in actions) { "Choose a supported session action." }
             val config = arguments["config"]
             require(config == null || config is Map<*, *>) { "Session config must be a map." }
+            if (action == "heel_zero") require(config == null) { "Heel baseline capture takes no config." }
             if (action in setOf("thigh_reference_begin", "thigh_session_begin")) {
                 require(config is Map<*, *> && config["exercise_id"] in setOf("squat", "sit_to_stand")) {
                     "Choose Squat or Sit-to-stand."

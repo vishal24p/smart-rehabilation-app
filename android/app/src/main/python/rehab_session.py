@@ -6,6 +6,8 @@ from statistics import mean, median, pstdev
 # Keep engineering settings together for bench tuning; these are not clinical targets.
 STANDING_S, STANDING_COUNT = 3.0, 60
 HEEL_S, HEEL_COUNT = 2.0, 30
+HEEL_ZERO_COUNT, HEEL_ZERO_MAX_MAD, HEEL_ZERO_ADC_MAX = 40, 12, 1023
+HEEL_SIGNAL_TAU_S = 0.15
 MAX_GAP_S = 0.250
 GYRO_NOISE_DPS, ACCEL_NOISE_G = 3.0, 0.03
 GRAVITY_MIN_G, GRAVITY_MAX_G, PLANE_MIN_G = 0.85, 1.15, 0.2
@@ -47,6 +49,9 @@ class SessionProcessor:
         self.contact_since = None
         self._reset_left_heel()
         self.heel_signals = {}
+        self.heel_filtered = None
+        self.heel_zero = None
+        self.heel_adc_max = 4095
         self.heel_share_right = self.heel_share_left = None
         self.heel_share_reason = 'Capture unloaded and loaded heels first'
         self.capture = []
@@ -75,10 +80,25 @@ class SessionProcessor:
         return self.snapshot()
 
     def command(self, action: str, config: dict | None = None) -> dict:
+        zero_capture = action == 'heel_zero'
         from thigh_session import THIGH_ACTIONS
         if action in THIGH_ACTIONS:
             self.thigh.command(action, config)
             return self.snapshot()
+        if action in ('heel_zero', 'heel_restore'):
+            if self.state == 'active':
+                return self._error('End the active session before calibrating.')
+            if action == 'heel_restore':
+                try:
+                    payload = self._validated_zero(config)
+                except ValueError as error:
+                    return self._error(str(error))
+                self._apply_zero(payload)
+                self.capture = []
+                self.state, self.progress, self.reason = 'setup', 1.0, None
+                return self.snapshot()
+            self.heel_adc_max = HEEL_ZERO_ADC_MAX
+            action = 'heel_unloaded'
         if action in ('configure', 'standing', 'movement', 'finish_movement', 'start') and self.motion_available is False:
             return self._error(self.motion_unavailable_reason)
         if action == 'configure':
@@ -106,8 +126,11 @@ class SessionProcessor:
             self.heel_baseline, self.heel_thresholds, self.heel_contact = None, None, None
             self._reset_left_heel()
             self.heel_signals = {}
+            self.heel_filtered = None
+            self.heel_zero = None
             self.heel_share_right = self.heel_share_left = None
-            self.heel_share_reason = 'Capture unloaded and loaded heels first'
+            self.heel_share_reason = ('Capture unloaded heels first' if self.heel_adc_max == HEEL_ZERO_ADC_MAX
+                                      else 'Capture unloaded and loaded heels first')
             self.state = 'setup'
         elif action in ('heel_unloaded', 'heel_loaded', 'standing'):
             if self.state == 'active':
@@ -116,6 +139,8 @@ class SessionProcessor:
                 return self._error('Capture the unloaded heel baseline first.')
             if action == 'standing' and not self._setup_confirmed():
                 return self._error('Confirm IMU ranges and both signed hinge axes first.')
+            if action in ('heel_unloaded', 'heel_loaded') and not zero_capture:
+                self.heel_adc_max = 4095
             self.capture = []
             self.progress = 0.0
             if action == 'standing':
@@ -126,12 +151,15 @@ class SessionProcessor:
                 self.left_heel_thresholds = self.left_heel_contact = None
                 self.left_contact_candidate = self.left_contact_since = None
                 self.heel_signals = {}
+                self.heel_filtered = None
+                self.heel_zero = None
                 self.heel_share_right = self.heel_share_left = None
-                self.heel_share_reason = 'Capture unloaded and loaded heels first'
+                self.heel_share_reason = ('Capture unloaded heels first' if zero_capture
+                                          else 'Capture unloaded and loaded heels first')
                 if action == 'heel_unloaded':
                     self.heel_baseline = None
                     self.left_heel_baseline = None
-            self.state = action
+            self.state = 'heel_zero' if zero_capture else action
         elif action == 'movement':
             if self.state != 'movement_ready':
                 return self._error('Capture a stable standing reference first.')
@@ -188,6 +216,7 @@ class SessionProcessor:
         self._clear_cycle()
 
     def interrupt(self, reason: str) -> dict:
+        saved_zero = self.heel_zero
         self.thigh.interrupt(reason)
         active = self.state == 'active'
         if active:
@@ -197,8 +226,12 @@ class SessionProcessor:
         self.contact_candidate, self.contact_since = None, None
         self._reset_left_heel()
         self.heel_signals = {}
+        self.heel_filtered = None
+        self.heel_zero = None
         self.heel_share_right = self.heel_share_left = None
         self.heel_share_reason = 'Capture unloaded and loaded heels first'
+        if saved_zero is not None:
+            self._apply_zero(saved_zero)
         self.last_t = None
         self.motion_available = None
         self.motion_unavailable_reason = None
@@ -235,6 +268,7 @@ class SessionProcessor:
                 'left_heel_saturated': self.left_heel_saturated,
                 'heel_share_right': self.heel_share_right, 'heel_share_left': self.heel_share_left,
                 'heel_share_reason': self.heel_share_reason,
+                'heel_zero': self.heel_zero,
                 'thigh': self.thigh.snapshot(),
                 'summary': None if self.summary is None else {
                     **self.summary, 'cycle_times_s': list(self.summary['cycle_times_s'])}}
@@ -254,10 +288,11 @@ class SessionProcessor:
         if left is None:
             self._reset_left_heel()
             self.heel_signals.pop('left', None)
+            self.heel_zero = None
         else:
             self._contact(left, t, 'left_')
-        self._heel_shares(sample['fsr'], left)
-        if self.state in ('heel_unloaded', 'heel_loaded'):
+        self._heel_shares(sample['fsr'], left, dt)
+        if self.state in ('heel_unloaded', 'heel_loaded', 'heel_zero'):
             self._capture_heel(sample['fsr'], t, left)
         self.thigh.process(sample)
         missing = [name for name in ('thigh', 'shin')
@@ -274,7 +309,8 @@ class SessionProcessor:
             if self.state == 'standing':
                 self._invalidate_motion()
                 self.state = 'needs_calibration'
-            if self.reason is None or self.reason.startswith('Missing '):
+            if (self.heel_zero is None or self.state != 'setup') and (
+                    self.reason is None or self.reason.startswith('Missing ')):
                 self.reason = self.motion_unavailable_reason
             return self.snapshot()
         if not self._setup_confirmed():
@@ -309,30 +345,50 @@ class SessionProcessor:
         self.left_heel_saturated = False
 
     def _heel_is_saturated(self, side: str, reading: int | None) -> bool:
+        if self.heel_adc_max == HEEL_ZERO_ADC_MAX and reading is not None and reading >= self.heel_adc_max:
+            return True
         if reading not in (0, 4095):
             return False
         calibration = self.heel_signals.get(side)
         return calibration is None or reading != calibration[0]
 
-    def _heel_shares(self, right: int, left: int | None):
+    def _heel_shares(self, right: int, left: int | None, dt: float = 0.0):
         self.heel_share_right = self.heel_share_left = None
         if left is None:
+            self.heel_filtered = None
             self.heel_share_reason = 'Left heel reading unavailable'
             return
         if self.heel_saturated or self.left_heel_saturated:
+            self.heel_filtered = None
             self.heel_share_reason = 'Heel ADC saturated'
             return
         if any(side not in self.heel_signals for side in ('right', 'left')):
-            self.heel_share_reason = 'Capture unloaded and loaded heels first'
+            self.heel_filtered = None
+            self.heel_share_reason = ('Capture unloaded heels first' if self.heel_adc_max == HEEL_ZERO_ADC_MAX
+                                      else 'Capture unloaded and loaded heels first')
             return
         signals = []
+        noise = []
         for side, reading in (('right', right), ('left', left)):
             baseline, direction, deadband = self.heel_signals[side]
             signal = max(0.0, (reading-baseline)*direction)
-            signals.append(signal if signal > deadband else 0.0)
+            noise.append(deadband)
+            signals.append(signal if self.heel_zero is not None or signal > deadband else 0.0)
+        if self.heel_zero is not None:
+            # Gate the total: deleting one small channel creates artificial 100/0 ratios.
+            if sum(signals) <= sum(noise):
+                self.heel_filtered = None
+                self.heel_share_reason = 'No load detected'
+                return
+            # Filter signals before dividing; avoid ratio noise near the unloaded baseline.
+            if self.heel_filtered is not None and dt > 0:
+                alpha = 1 - math.exp(-dt / HEEL_SIGNAL_TAU_S)
+                signals = [previous + alpha * (current - previous)
+                           for previous, current in zip(self.heel_filtered, signals)]
+            self.heel_filtered = signals
         total = sum(signals)
         if total > 0:
-            # ADC signal shares, not calibrated force or body-weight distribution.
+            # ponytail: unmatched signal gains; individual load curves are needed for force shares.
             self.heel_share_right = 100*signals[0]/total
             self.heel_share_left = 100-self.heel_share_right
             self.heel_share_reason = None
@@ -342,11 +398,16 @@ class SessionProcessor:
     def _capture_heel(self, fsr: int, t: int, left: int | None = None):
         self.capture.append((t, fsr, left))
         elapsed = (t - self.capture[0][0])/1e6
-        self.progress = min(1.0, elapsed/HEEL_S, len(self.capture)/HEEL_COUNT)
-        if elapsed < HEEL_S or len(self.capture) < HEEL_COUNT:
+        zero_capture = self.state == 'heel_zero'
+        count = HEEL_ZERO_COUNT if zero_capture else HEEL_COUNT
+        self.progress = min(1.0, elapsed/HEEL_S, len(self.capture)/count)
+        if elapsed < HEEL_S or len(self.capture) < count:
             return
         capture = self.capture
         self.capture = []
+        if zero_capture:
+            self._capture_zero(capture)
+            return
         unloaded_capture = self.state == 'heel_unloaded'
         failed = False
         for side, prefix, index in (('right', '', 1), ('left', 'left_', 2)):
@@ -381,6 +442,57 @@ class SessionProcessor:
                        if unloaded_capture else
                        'Heel readings overlap or saturate; repeat heel capture or continue to standing.'
                        if failed else None)
+
+    @staticmethod
+    def _validated_zero(payload: dict | None) -> dict:
+        if (not isinstance(payload, dict) or set(payload) != {'version', 'adc_max', 'left', 'right'}
+                or type(payload['version']) is not int or payload['version'] != 1
+                or type(payload['adc_max']) is not int or payload['adc_max'] != HEEL_ZERO_ADC_MAX):
+            raise ValueError('Invalid unloaded heel calibration.')
+        result = {'version': 1, 'adc_max': HEEL_ZERO_ADC_MAX}
+        for side in ('left', 'right'):
+            values = payload[side]
+            if not isinstance(values, dict) or set(values) != {'baseline', 'deadband'}:
+                raise ValueError('Invalid unloaded heel calibration.')
+            baseline, deadband = values['baseline'], values['deadband']
+            if (any(type(v) not in (int, float) for v in (baseline, deadband))
+                    or not 0 <= baseline <= HEEL_ZERO_ADC_MAX - 1
+                    or not 5 <= deadband <= HEEL_ZERO_ADC_MAX
+                    or any(not math.isfinite(v) for v in (baseline, deadband))):
+                raise ValueError('Invalid unloaded heel calibration.')
+            result[side] = {'baseline': float(baseline), 'deadband': float(deadband)}
+        return result
+
+    def _apply_zero(self, payload: dict):
+        self.heel_zero = payload
+        self.heel_adc_max = HEEL_ZERO_ADC_MAX
+        self.heel_filtered = None
+        self.heel_signals = {side: (payload[side]['baseline'], 1, payload[side]['deadband'])
+                             for side in ('left', 'right')}
+        self.heel_thresholds = self.left_heel_thresholds = None
+        self.heel_contact = self.left_heel_contact = None
+        self.heel_saturated = self.left_heel_saturated = False
+        self.heel_share_right = self.heel_share_left = None
+        self.heel_share_reason = 'No load detected'
+
+    def _capture_zero(self, capture: list):
+        payload = {'version': 1, 'adc_max': HEEL_ZERO_ADC_MAX}
+        for side, index in (('right', 1), ('left', 2)):
+            values = [row[index] for row in capture]
+            if any(value is None or not 0 <= value < HEEL_ZERO_ADC_MAX for value in values):
+                self.state, self.progress = 'setup', 0.0
+                self.reason = 'Both unloaded heel readings must be available and unclipped. Retry capture.'
+                return
+            center = median(values)
+            mad = median(abs(value-center) for value in values)
+            # Bench bound of 12 ADC: standard deviation also catches alternating levels with zero MAD.
+            if mad > HEEL_ZERO_MAX_MAD or pstdev(values) > HEEL_ZERO_MAX_MAD:
+                self.state, self.progress = 'setup', 0.0
+                self.reason = 'Heel readings are unstable. Keep both sensors unloaded and retry capture.'
+                return
+            payload[side] = {'baseline': float(center), 'deadband': float(max(5, 3*mad))}
+        self._apply_zero(payload)
+        self.state, self.progress, self.reason = 'setup', 1.0, None
 
     def _contact(self, fsr: int, t: int, prefix: str = ''):
         thresholds = getattr(self, prefix+'heel_thresholds')

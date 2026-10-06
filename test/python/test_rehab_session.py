@@ -206,6 +206,161 @@ class DualHeelTest(unittest.TestCase):
         self.assertEqual(self.processor.command('heel_unloaded')['state'], 'heel_unloaded')
 
 
+    def test_zero_share_keeps_both_small_signals_above_combined_noise(self):
+        self.processor.command('heel_restore', {'version': 1, 'adc_max': 1023,
+            'left': {'baseline': 13, 'deadband': 5},
+            'right': {'baseline': 13, 'deadband': 5}})
+        result = self.feed(18, 19)
+        self.assertAlmostEqual(result['heel_share_left'], 100 * 6 / 11)
+        self.assertAlmostEqual(result['heel_share_right'], 100 * 5 / 11)
+        self.assertEqual(self.feed(18, 18)['heel_share_reason'], 'No load detected')
+        self.assertIsNone(self.feed(13, 19)['heel_share_left'])
+
+    def test_zero_share_smooths_signals_then_clears_on_release(self):
+        self.processor.command('heel_restore', {'version': 1, 'adc_max': 1023,
+            'left': {'baseline': 13, 'deadband': 5},
+            'right': {'baseline': 13, 'deadband': 5}})
+        self.assertEqual(self.feed(13, 113)['heel_share_left'], 100)
+        transition = self.feed(113, 13)['heel_share_left']
+        self.assertGreater(transition, 0)
+        self.assertLess(transition, 100)
+        self.assertLess(self.feed(113, 13, count=30)['heel_share_left'], 0.1)
+        self.assertAlmostEqual(self.feed(213, 113, count=30)['heel_share_left'], 100 / 3, delta=0.01)
+        self.assertEqual(self.feed(13, 13)['heel_share_reason'], 'No load detected')
+        self.assertEqual(self.feed(13, 113)['heel_share_left'], 100)
+
+    def test_zero_capture_free_has_no_share_then_each_side_responds(self):
+        result = self.processor.command('heel_zero')
+        self.assertEqual(result['state'], 'heel_zero')
+        self.assertIsNone(result['heel_zero'])
+        result = self.feed(12, 10, count=42)
+        self.assertEqual(result['state'], 'setup')
+        self.assertIsNone(result['reason'])
+        self.assertEqual(result['heel_zero'], {'version': 1, 'adc_max': 1023,
+                         'right': {'baseline': 12.0, 'deadband': 5.0},
+                         'left': {'baseline': 10.0, 'deadband': 5.0}})
+        result = self.feed(13, 12)
+        self.assertIsNone(result['heel_share_left'])
+        self.assertEqual(result['heel_share_reason'], 'No load detected')
+        self.assertEqual(self.feed(12, 138)['heel_share_left'], 100)
+        self.assertAlmostEqual(self.feed(138, 10, count=30)['heel_share_right'], 100, delta=0.01)
+        self.assertAlmostEqual(self.feed(32, 30, count=30)['heel_share_left'], 50, delta=0.01)
+
+    def test_zero_capture_requires_both_duration_and_forty_frames(self):
+        self.processor.command('heel_zero')
+        for _ in range(39):
+            result = self.processor.process({'time_us': self.t, 'fsr': 12, 'fsr_left': 12})
+            self.t += 100_000
+        self.assertEqual(result['state'], 'heel_zero')
+        self.assertIsNone(result['heel_zero'])
+        self.assertIsNotNone(self.feed(12, 12)['heel_zero'])
+        self.processor.command('heel_zero')
+        for _ in range(40):
+            result = self.processor.process({'time_us': self.t, 'fsr': 12, 'fsr_left': 12})
+            self.t += 20_000
+        self.assertEqual(result['state'], 'heel_zero')
+        self.assertIsNone(result['heel_zero'])
+
+    def test_zero_noise_deadband_and_recapture_does_not_reuse_saved_zero(self):
+        self.processor.command('heel_zero')
+        for index in range(42):
+            result = self.feed(100 + (-4, 0, 4)[index % 3], 100)
+        self.assertEqual(result['heel_zero']['right']['deadband'], 12)
+        self.assertEqual(self.feed(110, 100)['heel_share_reason'], 'No load detected')
+        self.assertEqual(self.feed(118, 100)['heel_share_right'], 100)
+        result = self.processor.command('heel_zero')
+        self.assertIsNone(result['heel_zero'])
+        self.assertEqual(result['state'], 'heel_zero')
+
+    def test_zero_capture_rejects_missing_clipped_and_unstable_samples(self):
+        for mode in ('missing', 'clipped', 'unstable'):
+            with self.subTest(mode=mode):
+                self.processor.command('heel_zero')
+                for index in range(42):
+                    right = 1023 if mode == 'clipped' else (100 if index % 2 else 150) if mode == 'unstable' else 12
+                    result = self.feed(right, None if mode == 'missing' else 12)
+                self.assertEqual(result['state'], 'setup')
+                self.assertIsNone(result['heel_zero'])
+                self.assertIsNotNone(result['reason'])
+                self.assertIsNone(result['heel_share_right'])
+
+    def test_restore_after_parser_initialization_survives_first_frame_and_clips_at_1023(self):
+        from rehab_sensor import SensorParser, NAMED_DUAL_HEADER
+        import json
+        parser = SensorParser(processor=self.processor)
+        parser.process_line(','.join(NAMED_DUAL_HEADER))
+        payload = {'version': 1, 'adc_max': 1023,
+                   'left': {'baseline': 12, 'deadband': 5},
+                   'right': {'baseline': 10, 'deadband': 5}}
+        restored = self.processor.command('heel_restore', payload)
+        self.assertEqual(restored['heel_zero'], payload)
+        # CSV labels are swapped into app sides; CSV left goes to app right.
+        result = json.loads(parser.process_line('100000,0,0,16384,0,0,0,0,0,16384,0,0,0,110,12'))
+        self.assertEqual(result['analytics']['heel_share_right'], 100)
+        self.assertEqual(result['analytics']['heel_zero'], payload)
+        self.t = 150_000
+        result = self.feed(1023, 12)
+        self.assertTrue(result['heel_saturated'])
+        self.assertEqual(result['heel_share_reason'], 'Heel ADC saturated')
+        self.assertIsNone(result['heel_share_right'])
+
+    def test_restore_strict_payload_validation_and_reset(self):
+        from copy import deepcopy
+        payload = {'version': 1, 'adc_max': 1023,
+                   'left': {'baseline': 12, 'deadband': 5},
+                   'right': {'baseline': 12, 'deadband': 5}}
+        invalid = [None, {}, payload | {'version': True}, payload | {'version': 2},
+                   payload | {'adc_max': 4095}, payload | {'extra': 1}]
+        for key, bad in (('baseline', True), ('baseline', float('nan')),
+                         ('baseline', float('inf')), ('baseline', 1023),
+                         ('baseline', -1), ('baseline', 10**1000),
+                         ('deadband', 4), ('deadband', 1024), ('deadband', '5')):
+            wrong = deepcopy(payload)
+            wrong['left'][key] = bad
+            invalid.append(wrong)
+        for wrong in invalid:
+            with self.subTest(payload=wrong):
+                result = self.processor.command('heel_restore', wrong)
+                self.assertIsNone(result['heel_zero'])
+                self.assertIsNotNone(result['reason'])
+        self.processor.command('heel_restore', payload)
+        payload['left']['baseline'] = 900
+        self.assertEqual(self.processor.snapshot()['heel_zero']['left']['baseline'], 12)
+        result = self.processor.command('retry')
+        self.assertIsNone(result['heel_zero'])
+        self.assertEqual(self.feed(12, 12)['heel_share_reason'], 'Capture unloaded heels first')
+        self.processor.command('heel_zero')
+        self.feed(12, 12, count=42)
+        saved = self.processor.snapshot()['heel_zero']
+        self.assertEqual(self.processor.interrupt('Disconnected')['heel_zero'], saved)
+        self.assertEqual(self.feed(12, 12)['heel_share_reason'], 'No load detected')
+
+    def test_zero_survives_parser_restart_and_gap_without_live_shares(self):
+        from rehab_sensor import SensorParser, NAMED_DUAL_HEADER
+        import json
+        payload = {'version': 1, 'adc_max': 1023,
+                   'left': {'baseline': 12, 'deadband': 5},
+                   'right': {'baseline': 12, 'deadband': 5}}
+        parser = SensorParser(processor=self.processor)
+        parser.process_line(','.join(NAMED_DUAL_HEADER))
+        self.processor.command('heel_restore', payload)
+        def frame(t):
+            return f'{t},0,0,16384,0,0,0,0,0,16384,0,0,0,138,12'
+        first = json.loads(parser.process_line(frame(100_000)))
+        self.assertEqual(first['analytics']['heel_share_right'], 100)
+        for timestamp in (500_000, 50_000):
+            interrupted = json.loads(parser.process_line(frame(timestamp)))
+            self.assertEqual(interrupted['analytics']['heel_zero'], payload)
+            self.assertIsNone(interrupted['analytics']['heel_share_right'])
+            resumed = json.loads(parser.process_line(frame(timestamp + 50_000)))
+            self.assertEqual(resumed['analytics']['heel_share_right'], 100)
+        parser = SensorParser(processor=self.processor)
+        parser.process_line(','.join(NAMED_DUAL_HEADER))
+        resumed = json.loads(parser.process_line(frame(100_000)))
+        self.assertEqual(resumed['analytics']['heel_zero'], payload)
+        self.assertEqual(resumed['analytics']['heel_share_right'], 100)
+
+
 class MissingMotionTest(unittest.TestCase):
     def test_missing_shin_interrupts_active_motion_preserves_heels_then_restores(self):
         rig = Rig()
