@@ -31,16 +31,24 @@ def _gravity_tilt(accel: list, axis: dict) -> float:
 
 class SessionProcessor:
     def __init__(self):
+        from thigh_session import ThighProcessor
+        self.thigh = ThighProcessor()
         self.state, self.reason, self.progress = 'setup', None, 0.0
         self.config = None
         self.summary = None
         self.last_t = None
+        self.motion_available = None
+        self.motion_unavailable_reason = None
         self.heel_contact = None
         self.heel_saturated = False
         self.heel_baseline = None
         self.heel_thresholds = None
         self.contact_candidate = None
         self.contact_since = None
+        self._reset_left_heel()
+        self.heel_signals = {}
+        self.heel_share_right = self.heel_share_left = None
+        self.heel_share_reason = 'Capture unloaded and loaded heels first'
         self.capture = []
         self.angle = None
         self.segments = None
@@ -67,6 +75,12 @@ class SessionProcessor:
         return self.snapshot()
 
     def command(self, action: str, config: dict | None = None) -> dict:
+        from thigh_session import THIGH_ACTIONS
+        if action in THIGH_ACTIONS:
+            self.thigh.command(action, config)
+            return self.snapshot()
+        if action in ('configure', 'standing', 'movement', 'finish_movement', 'start') and self.motion_available is False:
+            return self._error(self.motion_unavailable_reason)
         if action == 'configure':
             if self.state == 'active':
                 return self._error('End the active session before changing setup.')
@@ -90,6 +104,10 @@ class SessionProcessor:
                 return self._error('End the active session before retrying calibration.')
             self._invalidate_motion()
             self.heel_baseline, self.heel_thresholds, self.heel_contact = None, None, None
+            self._reset_left_heel()
+            self.heel_signals = {}
+            self.heel_share_right = self.heel_share_left = None
+            self.heel_share_reason = 'Capture unloaded and loaded heels first'
             self.state = 'setup'
         elif action in ('heel_unloaded', 'heel_loaded', 'standing'):
             if self.state == 'active':
@@ -105,8 +123,14 @@ class SessionProcessor:
             else:
                 self.heel_thresholds, self.heel_contact = None, None
                 self.contact_candidate, self.contact_since = None, None
+                self.left_heel_thresholds = self.left_heel_contact = None
+                self.left_contact_candidate = self.left_contact_since = None
+                self.heel_signals = {}
+                self.heel_share_right = self.heel_share_left = None
+                self.heel_share_reason = 'Capture unloaded and loaded heels first'
                 if action == 'heel_unloaded':
                     self.heel_baseline = None
+                    self.left_heel_baseline = None
             self.state = action
         elif action == 'movement':
             if self.state != 'movement_ready':
@@ -164,13 +188,20 @@ class SessionProcessor:
         self._clear_cycle()
 
     def interrupt(self, reason: str) -> dict:
+        self.thigh.interrupt(reason)
         active = self.state == 'active'
         if active:
             self._freeze(True)
         self._invalidate_motion()
         self.heel_baseline, self.heel_thresholds, self.heel_contact = None, None, None
         self.contact_candidate, self.contact_since = None, None
+        self._reset_left_heel()
+        self.heel_signals = {}
+        self.heel_share_right = self.heel_share_left = None
+        self.heel_share_reason = 'Capture unloaded and loaded heels first'
         self.last_t = None
+        self.motion_available = None
+        self.motion_unavailable_reason = None
         self.state = 'interrupted' if active else 'needs_calibration'
         self.reason = reason
         return self.snapshot()
@@ -200,6 +231,11 @@ class SessionProcessor:
                 'cycles': len(self.cycle_times) if showing_session else None,
                 'last_cycle_s': self.cycle_times[-1] if showing_session and self.cycle_times else None,
                 'heel_contact': self.heel_contact, 'heel_saturated': self.heel_saturated,
+                'left_heel_contact': self.left_heel_contact,
+                'left_heel_saturated': self.left_heel_saturated,
+                'heel_share_right': self.heel_share_right, 'heel_share_left': self.heel_share_left,
+                'heel_share_reason': self.heel_share_reason,
+                'thigh': self.thigh.snapshot(),
                 'summary': None if self.summary is None else {
                     **self.summary, 'cycle_times_s': list(self.summary['cycle_times_s'])}}
 
@@ -211,10 +247,36 @@ class SessionProcessor:
             return self.interrupt('Device timestamp reset or sample gap; repeat calibration.')
         dt = 0.0 if self.last_t is None else (t - self.last_t)/1e6
         self.last_t = t
-        self.heel_saturated = sample['fsr'] in (0, 4095)
+        self.heel_saturated = self._heel_is_saturated('right', sample['fsr'])
         self._contact(sample['fsr'], t)
+        left = sample.get('fsr_left')
+        self.left_heel_saturated = self._heel_is_saturated('left', left)
+        if left is None:
+            self._reset_left_heel()
+            self.heel_signals.pop('left', None)
+        else:
+            self._contact(left, t, 'left_')
+        self._heel_shares(sample['fsr'], left)
         if self.state in ('heel_unloaded', 'heel_loaded'):
-            self._capture_heel(sample['fsr'], t)
+            self._capture_heel(sample['fsr'], t, left)
+        self.thigh.process(sample)
+        missing = [name for name in ('thigh', 'shin')
+                   if sample.get(name+'_accel') is None or sample.get(name+'_gyro') is None]
+        self.motion_available = not missing
+        self.motion_unavailable_reason = (
+            'Missing ' + ' and '.join(missing) + ' IMU readings; knee motion needs both thigh and shin sensors.'
+            if missing else None)
+        if missing:
+            if self.state in ('movement_ready', 'movement', 'ready', 'active', 'ended'):
+                return self._motion_failure(self.motion_unavailable_reason)
+            # Heel calibration and shares remain usable without either IMU.
+            self.angle = None
+            if self.state == 'standing':
+                self._invalidate_motion()
+                self.state = 'needs_calibration'
+            if self.reason is None or self.reason.startswith('Missing '):
+                self.reason = self.motion_unavailable_reason
+            return self.snapshot()
         if not self._setup_confirmed():
             return self.snapshot()
         scaled = sample.get('scaled', False)
@@ -241,53 +303,107 @@ class SessionProcessor:
                 self._cycle(t)
         return self.snapshot()
 
-    def _capture_heel(self, fsr: int, t: int):
-        self.capture.append((t, fsr))
+    def _reset_left_heel(self):
+        self.left_heel_baseline = self.left_heel_thresholds = self.left_heel_contact = None
+        self.left_contact_candidate = self.left_contact_since = None
+        self.left_heel_saturated = False
+
+    def _heel_is_saturated(self, side: str, reading: int | None) -> bool:
+        if reading not in (0, 4095):
+            return False
+        calibration = self.heel_signals.get(side)
+        return calibration is None or reading != calibration[0]
+
+    def _heel_shares(self, right: int, left: int | None):
+        self.heel_share_right = self.heel_share_left = None
+        if left is None:
+            self.heel_share_reason = 'Left heel reading unavailable'
+            return
+        if self.heel_saturated or self.left_heel_saturated:
+            self.heel_share_reason = 'Heel ADC saturated'
+            return
+        if any(side not in self.heel_signals for side in ('right', 'left')):
+            self.heel_share_reason = 'Capture unloaded and loaded heels first'
+            return
+        signals = []
+        for side, reading in (('right', right), ('left', left)):
+            baseline, direction, deadband = self.heel_signals[side]
+            signal = max(0.0, (reading-baseline)*direction)
+            signals.append(signal if signal > deadband else 0.0)
+        total = sum(signals)
+        if total > 0:
+            # ADC signal shares, not calibrated force or body-weight distribution.
+            self.heel_share_right = 100*signals[0]/total
+            self.heel_share_left = 100-self.heel_share_right
+            self.heel_share_reason = None
+        else:
+            self.heel_share_reason = 'No load detected'
+
+    def _capture_heel(self, fsr: int, t: int, left: int | None = None):
+        self.capture.append((t, fsr, left))
         elapsed = (t - self.capture[0][0])/1e6
         self.progress = min(1.0, elapsed/HEEL_S, len(self.capture)/HEEL_COUNT)
         if elapsed < HEEL_S or len(self.capture) < HEEL_COUNT:
             return
-        values = [value for _, value in self.capture]
-        center = median(values)
-        mad = median(abs(value-center) for value in values)
+        capture = self.capture
         self.capture = []
-        if self.state == 'heel_unloaded':
-            self.heel_baseline = (center, mad)
-            # Wait for explicit loaded command; do not capture the transition.
-            self.state, self.progress = 'setup', 0.0
-            self.reason = 'Press the heel sensor, then start the loaded capture.'
-        else:
-            unloaded, unloaded_mad = self.heel_baseline
+        unloaded_capture = self.state == 'heel_unloaded'
+        failed = False
+        for side, prefix, index in (('right', '', 1), ('left', 'left_', 2)):
+            values = [row[index] for row in capture]
+            if any(value is None for value in values):
+                continue
+            center = median(values)
+            mad = median(abs(value-center) for value in values)
+            if unloaded_capture:
+                setattr(self, prefix+'heel_baseline', (center, mad))
+                continue
+            baseline = getattr(self, prefix+'heel_baseline')
+            if baseline is None:
+                failed = True
+                continue
+            unloaded, unloaded_mad = baseline
             separation = abs(center-unloaded)
             noise = max(mad, unloaded_mad)
-            self.state = 'setup'
             if separation < max(50, 6*noise) or noise > max(12, 0.08*separation):
-                self.heel_thresholds, self.heel_contact = None, None
-                self.contact_candidate, self.contact_since = None, None
-                self.reason = 'Heel readings overlap; repeat heel capture or continue to standing.'
-                return
+                failed = True
+                continue
             delta = center-unloaded
-            self.heel_thresholds = (unloaded+0.65*delta, unloaded+0.35*delta, 1 if delta > 0 else -1)
-            self.heel_contact = None
-            self.contact_candidate, self.contact_since = None, None
-            self.reason = None
+            direction = 1 if delta > 0 else -1
+            setattr(self, prefix+'heel_thresholds',
+                    (unloaded+0.65*delta, unloaded+0.35*delta, direction))
+            if center not in (0, 4095):
+                self.heel_signals[side] = (unloaded, direction, max(5, 3*noise))
+            else:
+                failed = True
+        self.state, self.progress = 'setup', 0.0 if unloaded_capture else 1.0
+        self.reason = ('Load both heel sensors steadily, then start the loaded capture.'
+                       if unloaded_capture else
+                       'Heel readings overlap or saturate; repeat heel capture or continue to standing.'
+                       if failed else None)
 
-    def _contact(self, fsr: int, t: int):
-        if self.heel_thresholds is None:
+    def _contact(self, fsr: int, t: int, prefix: str = ''):
+        thresholds = getattr(self, prefix+'heel_thresholds')
+        if thresholds is None:
             return
-        on, off, direction = self.heel_thresholds
-        candidate = self.heel_contact
+        on, off, direction = thresholds
+        contact = getattr(self, prefix+'heel_contact')
+        previous = getattr(self, prefix+'contact_candidate')
+        since = getattr(self, prefix+'contact_since')
+        candidate = contact
         if (fsr-on)*direction >= 0:
             candidate = True
         elif (fsr-off)*direction <= 0:
             candidate = False
-        if candidate is None or candidate == self.heel_contact:
-            self.contact_candidate, self.contact_since = None, None
-        elif candidate != self.contact_candidate:
-            self.contact_candidate, self.contact_since = candidate, t
-        elif (t-self.contact_since)/1e6 >= CONTACT_DWELL_S:
-            self.heel_contact = candidate
-            self.contact_candidate, self.contact_since = None, None
+        if candidate is None or candidate == contact:
+            previous, since = None, None
+        elif candidate != previous:
+            previous, since = candidate, t
+        elif (t-since)/1e6 >= CONTACT_DWELL_S:
+            setattr(self, prefix+'heel_contact', candidate)
+            previous, since = None, None
+        setattr(self, prefix+'contact_candidate', previous)
+        setattr(self, prefix+'contact_since', since)
 
     def _capture_standing(self, boards: list, t: int):
         valid = all(GRAVITY_MIN_G <= math.sqrt(sum(x*x for x in a)) <= GRAVITY_MAX_G

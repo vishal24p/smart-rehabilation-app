@@ -1,11 +1,32 @@
 # Rehab monitor
 
-Flutter Android app with embedded Python processing. **Live sensors** opens
-actual ESP32 readings, a heel ADC graph, and guided calibration for a single-leg
-sit-to-stand session. It shows estimated knee bend from standing, session ROM,
-detected cycles, last-cycle time and calibrated heel contact. The dashboard is a
-labeled sample review. Live outputs are prototype estimates, not clinical
-accuracy, diagnosis or recovery scores.
+Flutter Android app with embedded Python processing. Home opens **Squat** and
+**Sit-to-stand** sessions, **Exercise references**, and live ESP32 diagnostics.
+One thigh MPU estimates standing-relative thigh tilt and bend-return repetitions.
+SQLite stores a personal reference for each exercise. Outputs are prototype
+estimates, not clinical accuracy, diagnosis or recovery scores.
+
+## Healthy-thigh references and exercise sessions
+
+1. Open **Exercise references**, choose the exercise, and connect the wearable.
+2. Tap **Record healthy-thigh reference** with the MPU on the healthy thigh.
+   Stand still during the large **3 → 2 → 1** session-zero countdown. It completes
+   only after three seconds and at least 60 stable samples; motion resets it.
+3. Perform one complete movement and return standing, then **Finish recording**.
+   A clear excursion of at least 30° with a brief lowered hold and return is an
+   engineering capture requirement, not a prescribed clinical exercise target.
+4. Review the measured thigh range and **Save reference**. Each exercise is saved
+   locally in SQLite and survives app restart. **Re-record reference** replaces
+   it only after another successful save; cancellation retains the previous one.
+5. From home, choose the exercise and connect, then **Start exercise**. The saved
+   target loads automatically. Stand still for the session-zero countdown, then
+   exercise. Completed upright-lowered-upright cycles show their peak thigh tilt
+   and difference from the saved reference. **End exercise** stops counting.
+
+The selected exercise labels the session: one thigh MPU cannot distinguish squat
+from sit-to-stand, confirm chair contact, measure knee angle, or certify form.
+Inclination includes lateral tilt. Use consistent placement on the front thigh.
+Reference and exercise routes use ±2g/±250°/s, matching the supplied ESP32 firmware.
 
 ## Phone setup
 
@@ -18,12 +39,13 @@ accuracy, diagnosis or recovery scores.
 4. Move thigh/shin sensors and press the heel sensor; verify their readings change.
 5. Use the calibration/session controls below before starting an exercise session.
 6. **Disconnect**, leaving the view, or backgrounding stops readings/retries.
-   Returning requires connecting again. No persistence/background recording.
+   Returning requires connecting again. Saved exercise references persist;
+   live readings and sensor zero do not run in the background.
 
 Python runs inside the installed APK. No laptop, cloud server, internet or phone
 Python installation is required during a session. Building downloads dependencies.
 
-## Calibration and session
+## Optional two-MPU knee calibration in Live sensors
 
 1. Verify both MPU ranges are ±2g and ±250°/s, then enable **IMU ranges confirmed**.
    If already connected in raw mode, disconnect, enable it and reconnect.
@@ -72,6 +94,54 @@ time_us,thigh_ax,thigh_ay,thigh_az,thigh_gx,thigh_gy,thigh_gz,shin_ax,shin_ay,sh
 Thigh MPU6050: `0x69`; shin: `0x68`; FSR: GPIO34. Timestamp is unsigned 32-bit
 microseconds, motion values signed 16-bit counts, heel ADC 0..4095. CRLF accepted.
 Verify the actual firmware/header and MPU configuration before physical-unit use.
+
+### Two heel sensors
+
+The existing `fsr` column represents the **right** heel. To send the left heel,
+append `fsr_left` to the header and append its integer ADC reading to every row:
+
+```text
+time_us,thigh_ax,thigh_ay,thigh_az,thigh_gx,thigh_gy,thigh_gz,shin_ax,shin_ay,shin_az,shin_gx,shin_gy,shin_gz,fsr,fsr_left
+```
+
+Both channels accept 0..4095. The old right-only stream still works; left readings
+and comparison remain unavailable until both channels arrive. Firmware wiring
+and the second GPIO are configured separately; this change is software-only.
+
+The app also accepts explicit named heel columns (`fsr_left,fsr_right`), including
+the supplied thigh-only firmware header:
+
+```text
+time_us,thigh_ax,thigh_ay,thigh_az,thigh_gx,thigh_gy,thigh_gz,fsr_left,fsr_right
+```
+
+To retain shin readings in that format, insert
+`shin_ax,shin_ay,shin_az,shin_gx,shin_gy,shin_gz` before the two heel columns,
+and transmit the actual six shin readings in each row. Names determine heel
+assignment: the supplied sketch labels GPIO34 left and GPIO35 right.
+
+Thigh-only streams keep heel capture/comparison active, but display shin readings
+and knee metrics as unavailable. Existing shin-enabled streams retain their
+normal calibration and session flow. The supplied thigh-only firmware's six-zero
+failed-read placeholder is treated as unavailable thigh data; it does not
+replace missing shin data. Restoring both IMUs requires fresh motion calibration.
+
+In Live sensors, capture both heels **unloaded**, then both **steadily loaded**,
+for two seconds each. Heel capture does not require IMU axes or weight input.
+Python determines each channel's unloaded median, noise and loaded polarity.
+It computes `signal = max(0, (ADC - unloaded_baseline) * polarity)`, discarding
+signals within `max(5 ADC, 3 * calibration noise)` of zero. Left/right shares
+are `100 * signal / (left_signal + right_signal)` and total 100%; the display
+rounds one side and uses its complement for the other.
+
+These are **relative heel ADC signal shares**, not calibrated force, pressure,
+body-weight distribution, or whole-leg loading. FSR response is nonlinear; equal
+ADC excursions do not establish equal force. No Newton conversion is assumed.
+Before heel captures, the bottom comparison uses raw ADC shares when both
+channels are available and neither is clipped. Both-zero signals have no share.
+Valid heel captures switch comparison to baseline-adjusted shares. Missing left
+data, clipped measurements, and calibrated no-load states show a reason.
+These heel captures remain separate from saved thigh references.
 
 Readings default to raw counts. Enable **IMU ranges confirmed** only after checking
 both MPUs use ±2g acceleration and ±250°/s angular velocity. Python then divides

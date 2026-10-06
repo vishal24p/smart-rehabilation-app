@@ -21,6 +21,195 @@ void main() {
   });
   tearDown(() => connection.dispose());
 
+  testWidgets('live ADC shares need no captures and respect invalid signals', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: LiveSensorScreen(connection: connection)),
+    );
+    await connection.connect();
+    var time = 1;
+    Future<void> readings(int? left, int right, {String? reason}) async {
+      await tester.runAsync(
+        () => fixtures.emit(
+          Map<String, Object?>.from(fixtures.sample(time: time++))
+            ..['fsr_left'] = left
+            ..['fsr'] = right
+            ..['analytics'] = (fixtures.analytics()
+              ..['heel_share_reason'] =
+                  reason ?? 'Capture unloaded and loaded heels first'),
+        ),
+      );
+      await tester.pump();
+    }
+
+    await readings(800, 1200);
+    await tester.scrollUntilVisible(find.text('Left 40%'), 100, maxScrolls: 80);
+    expect(find.text('Right 60%'), findsOneWidget);
+    expect(find.text('Higher signal: right'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Sensor signal share'), 100);
+    expect(find.text('Sensor signal share'), findsOneWidget);
+    expect(find.textContaining('4095'), findsNothing);
+    expect(find.textContaining('Live FSR readings'), findsNothing);
+    await readings(1200, 800);
+    expect(find.text('Left 60%'), findsOneWidget);
+    expect(find.text('Higher signal: left'), findsOneWidget);
+    await readings(0, 1000, reason: 'Heel ADC saturated');
+    expect(find.text('Left 0%'), findsOneWidget);
+    expect(find.text('Right 100%'), findsOneWidget);
+    await readings(0, 0, reason: 'Heel ADC saturated');
+    expect(find.text('No heel signal'), findsOneWidget);
+    expect(find.textContaining('Higher signal:'), findsNothing);
+    await readings(4095, 1000, reason: 'Heel ADC saturated');
+    expect(find.text('Sensor limit reached'), findsOneWidget);
+    await readings(null, 1000);
+    expect(find.text('Left sensor unavailable'), findsOneWidget);
+    await readings(800, 1200, reason: 'No load detected');
+    await tester.scrollUntilVisible(find.text('No load detected'), 100);
+    expect(find.text('No load detected'), findsOneWidget);
+    expect(find.text('Left 40%'), findsNothing);
+    await tester.runAsync(() => connection.disconnect());
+    await tester.pump();
+    expect(find.textContaining('Live FSR readings'), findsNothing);
+  });
+
+  testWidgets('loading estimate follows displayed shares and clears', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: LiveSensorScreen(connection: connection)),
+    );
+    await connection.connect();
+    for (final left in [65.0, 35.0, 50.4]) {
+      await tester.runAsync(
+        () => fixtures.emit({
+          'type': 'analytics',
+          'analytics': fixtures.analytics()
+            ..['heel_share_left'] = left
+            ..['heel_share_right'] = 100 - left,
+        }),
+      );
+      await tester.pump();
+      final label = left.round() == 50
+          ? 'Equal shares'
+          : 'Higher estimate: ${left > 50 ? 'left' : 'right'}';
+      await tester.scrollUntilVisible(find.text(label), 100, maxScrolls: 80);
+      await tester.scrollUntilVisible(
+        find.text('Left ${left.round()}%'),
+        -100,
+        maxScrolls: 80,
+      );
+      expect(find.text('Left ${left.round()}%'), findsOneWidget);
+      expect(find.text('Right ${100 - left.round()}%'), findsOneWidget);
+      expect(find.text(label), findsOneWidget);
+    }
+    await tester.runAsync(
+      () => fixtures.emit({
+        'type': 'analytics',
+        'analytics': fixtures.analytics()
+          ..['heel_share_reason'] = 'No load detected',
+      }),
+    );
+    await tester.pump();
+    expect(find.textContaining('Higher estimate:'), findsNothing);
+    expect(find.text('Equal shares'), findsNothing);
+    await tester.runAsync(() => connection.disconnect());
+    await tester.pump();
+    expect(find.textContaining('Higher estimate:'), findsNothing);
+  });
+
+  testWidgets(
+    'thigh-only stream keeps heel comparison and marks shin unavailable',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(home: LiveSensorScreen(connection: connection)),
+      );
+      await connection.connect();
+      final thighOnly = Map<String, Object?>.from(fixtures.sample())
+        ..['shin_accel'] = null
+        ..['shin_gyro'] = null
+        ..['fsr_left'] = 800
+        ..['analytics'] = (fixtures.analytics()
+          ..['heel_share_left'] = 40.0
+          ..['heel_share_right'] = 60.0);
+      await tester.runAsync(() => fixtures.emit(thighOnly));
+      await tester.pump();
+      await tester.scrollUntilVisible(
+        find.text('Left 40%'),
+        100,
+        maxScrolls: 80,
+      );
+      await tester.scrollUntilVisible(
+        find.text('Sensor readings unavailable in this stream'),
+        -200,
+        maxScrolls: 80,
+      );
+      expect(find.text('Shin · MPU 0x68'), findsOneWidget);
+      expect(
+        find.text('Sensor readings unavailable in this stream'),
+        findsOneWidget,
+      );
+      expect(connection.latest!.shinAccel, isNull);
+      expect(tester.takeException(), isNull);
+      await tester.runAsync(() => fixtures.emit(fixtures.sample(time: 2)));
+      await tester.pump();
+      expect(connection.latest!.shinAccel, [7, 8, 9]);
+      expect(
+        find.text('Sensor readings unavailable in this stream'),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets('dual heels show graphs, bottom shares and unavailable states', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: LiveSensorScreen(connection: connection)),
+    );
+    await connection.connect();
+    await tester.runAsync(
+      () => fixtures.emit(
+        fixtures.sample()
+          ..['fsr_left'] = 800
+          ..['analytics'] = (fixtures.analytics()
+            ..['heel_share_left'] = 40.0
+            ..['heel_share_right'] = 60.0),
+      ),
+    );
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('Left heel ADC · last 10 seconds'),
+      200,
+      maxScrolls: 80,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(find.text('Left 40%'), 100, maxScrolls: 80);
+    expect(find.text('Right 60%'), findsOneWidget);
+    expect(find.text('Baseline-adjusted signal share'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.textContaining('4095'), findsNothing);
+    await tester.runAsync(
+      () => fixtures.emit({
+        'type': 'analytics',
+        'analytics': fixtures.analytics()
+          ..['heel_share_reason'] = 'No load detected',
+      }),
+    );
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('No load detected'),
+      200,
+      maxScrolls: 80,
+    );
+    expect(find.text('Left 40%'), findsNothing);
+    expect(find.text('Right 60%'), findsNothing);
+    await tester.runAsync(() => connection.disconnect());
+    await tester.pump();
+    expect(find.text('No load detected'), findsNothing);
+    expect(find.textContaining('4095'), findsNothing);
+  });
+
   testWidgets('controls, raw readings and stale data behave honestly', (
     tester,
   ) async {
@@ -46,14 +235,19 @@ void main() {
     await tester.pump();
     await tester.scrollUntilVisible(find.text('Live'), -200);
     expect(find.text('Live'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('1200 / 4095'), 200);
-    expect(find.text('1200 / 4095'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Thigh · MPU 0x69'),
+      200,
+      maxScrolls: 80,
+    );
+    expect(connection.latest!.fsr, 1200);
+    expect(find.textContaining('4095'), findsNothing);
     expect(find.textContaining('raw counts'), findsWidgets);
     expect(find.textContaining('accuracy'), findsNothing);
     await tester.scrollUntilVisible(find.text('Disconnect'), -200);
     await tester.tap(find.text('Disconnect'));
     await tester.pump();
-    expect(find.text('1200 / 4095'), findsNothing);
+    expect(connection.latest, isNull);
     expect(find.text('Retry connection'), findsOneWidget);
   });
 
@@ -108,11 +302,7 @@ void main() {
       );
       expect(find.text('Acceleration · g'), findsWidgets);
       expect(find.text('Angular velocity · °/s'), findsWidgets);
-      await tester.scrollUntilVisible(find.text('1200 / 4095'), 200);
-      expect(
-        find.bySemanticsLabel('Heel pressure ADC reading 1200 out of 4095'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('4095'), findsNothing);
       await tester.scrollUntilVisible(
         find.text('Heel ADC · last 10 seconds'),
         100,
@@ -183,6 +373,10 @@ void main() {
       expect(connection.status, WearableStatus.disconnected);
       expect(connection.analytics!.cycles, isNull);
       expect(connection.analytics!.angleDeg, isNull);
+      // Resume before scrolling offscreen content; readings stay disconnected.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(connection.status, WearableStatus.disconnected);
       await tester.scrollUntilVisible(
         find.text('Start session'),
         200,
@@ -231,11 +425,19 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Connect wearable'));
       await tester.pump();
-      await tester.runAsync(() => fixtures.emit(fixtures.sample()));
+      await tester.runAsync(
+        () => fixtures.emit(
+          fixtures.sample()
+            ..['fsr_left'] = 800
+            ..['analytics'] = (fixtures.analytics()
+              ..['heel_share_left'] = 40.0
+              ..['heel_share_right'] = 60.0),
+        ),
+      );
       await tester.pump();
       expect(connection.status, WearableStatus.live);
       await tester.scrollUntilVisible(
-        find.text('Heel ADC · last 10 seconds'),
+        find.text('Left heel ADC · last 10 seconds'),
         200,
         maxScrolls: 80,
       );

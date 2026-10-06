@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'wearable_connection.dart';
 import 'rehab_session_panel.dart';
+import 'thigh_session_panel.dart';
 
 class LiveSensorScreen extends StatefulWidget {
-  const LiveSensorScreen({this.connection, super.key});
+  const LiveSensorScreen({this.connection, this.exerciseId, super.key});
   final WearableConnection? connection;
+  final String? exerciseId;
 
   @override
   State<LiveSensorScreen> createState() => _LiveSensorScreenState();
@@ -59,6 +61,27 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
             animation: _connection,
             builder: (context, _) {
               final readings = _connection.latest;
+              final analytics = _connection.analytics;
+              final rawLeft = readings?.fsrLeft;
+              final rawRight = readings?.fsr;
+              final uncalibrated =
+                  analytics?.heelShareLeft == null &&
+                  (analytics?.heelShareReason == null ||
+                      analytics?.heelShareReason == 'Heel ADC saturated' ||
+                      analytics?.heelShareReason ==
+                          'Capture unloaded and loaded heels first');
+              final rawTotal = (rawLeft ?? 0) + (rawRight ?? 0);
+              final rawValid =
+                  rawLeft != null &&
+                  rawRight != null &&
+                  rawLeft < 4095 &&
+                  rawRight < 4095 &&
+                  rawTotal > 0;
+              final leftShare =
+                  analytics?.heelShareLeft?.round() ??
+                  (uncalibrated && rawValid
+                      ? (100 * rawLeft / rawTotal).round()
+                      : null);
               final active = _connection.active;
               final status = switch (_connection.status) {
                 WearableStatus.idle => 'Ready to connect',
@@ -99,7 +122,9 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                             } else {
                               unawaited(
                                 _connection.connect(
-                                  scaleConfirmed: _confirmedRanges,
+                                  scaleConfirmed:
+                                      widget.exerciseId != null ||
+                                      _confirmedRanges,
                                 ),
                               );
                             }
@@ -122,24 +147,32 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                     child: const Text('Open Wi-Fi settings'),
                   ),
                   const SizedBox(height: 12),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    value: _confirmedRanges,
-                    onChanged: active
-                        ? null
-                        : (value) =>
-                              setState(() => _confirmedRanges = value ?? false),
-                    title: const Text('IMU ranges confirmed'),
-                    subtitle: const Text(
-                      'Enable only if both MPUs use ±2g and ±250°/s. Otherwise readings stay in raw counts.',
+                  if (widget.exerciseId == null)
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: _confirmedRanges,
+                      onChanged: active
+                          ? null
+                          : (value) => setState(
+                              () => _confirmedRanges = value ?? false,
+                            ),
+                      title: const Text('IMU ranges confirmed'),
+                      subtitle: const Text(
+                        'Enable only if both MPUs use ±2g and ±250°/s. Otherwise readings stay in raw counts.',
+                      ),
                     ),
-                  ),
                   const SizedBox(height: 24),
-                  RehabSessionPanel(
-                    connection: _connection,
-                    rangesConfirmed: _confirmedRanges,
-                  ),
+                  if (widget.exerciseId != null)
+                    ThighSessionPanel(
+                      connection: _connection,
+                      exerciseId: widget.exerciseId!,
+                    )
+                  else
+                    RehabSessionPanel(
+                      connection: _connection,
+                      rangesConfirmed: _confirmedRanges,
+                    ),
                   const Divider(height: 40),
                   Text(
                     'Raw sensor diagnostics',
@@ -161,27 +194,13 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                       scaled: readings.scaled,
                     ),
                     const SizedBox(height: 24),
-                    Text(
-                      'Heel pressure',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Semantics(
-                      label:
-                          'Heel pressure ADC reading ${readings.fsr} out of 4095',
-                      excludeSemantics: true,
-                      child: Text(
-                        '${readings.fsr} / 4095',
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      ),
-                    ),
-                    const Text('Raw ADC reading · not force in newtons'),
                     const SizedBox(height: 20),
                   ],
                   Text(
                     'Heel ADC · last 10 seconds',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
+                  const Text('Right heel'),
                   const SizedBox(height: 12),
                   Semantics(
                     label: _connection.history.isEmpty
@@ -203,12 +222,90 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                   ),
                   const Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [Text('10 seconds ago'), Text('Now')],
+                    children: [
+                      Expanded(child: Text('10 seconds ago')),
+                      Text('Now'),
+                    ],
                   ),
+                  if (readings?.fsrLeft != null) ...[
+                    const SizedBox(height: 20),
+                    Text(
+                      'Left heel ADC · last 10 seconds',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 12),
+                    Semantics(
+                      label:
+                          'Left heel ADC graph. Latest ${readings!.fsrLeft} out of 4095.',
+                      child: SizedBox(
+                        height: 140,
+                        child: CustomPaint(
+                          painter: _HeelGraph(
+                            _connection.history,
+                            Theme.of(context).colorScheme.primary,
+                            left: true,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(child: Text('10 seconds ago')),
+                        Text('Now'),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   const Text(
                     'Local Wi-Fi · keep this screen open during your session.',
                     style: TextStyle(height: 1.5),
+                  ),
+                  const Divider(height: 40),
+                  Text(
+                    'Heel signal comparison',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  if (leftShare != null) ...[
+                    Wrap(
+                      spacing: 24,
+                      runSpacing: 8,
+                      children: [
+                        Text(
+                          'Left $leftShare%',
+                          style: Theme.of(context).textTheme.headlineLarge,
+                        ),
+                        Text(
+                          'Right ${100 - leftShare}%',
+                          style: Theme.of(context).textTheme.headlineLarge,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      leftShare == 50
+                          ? 'Equal shares'
+                          : '${uncalibrated ? 'Higher signal' : 'Higher estimate'}: ${leftShare > 50 ? 'left' : 'right'}',
+                    ),
+                  ] else
+                    Text(
+                      readings == null
+                          ? 'Connect wearable'
+                          : uncalibrated
+                          ? rawLeft == null
+                                ? 'Left sensor unavailable'
+                                : rawLeft == 4095 || rawRight == 4095
+                                ? 'Sensor limit reached'
+                                : 'No heel signal'
+                          : analytics?.heelShareReason ??
+                                'Heel comparison unavailable',
+                    ),
+                  const SizedBox(height: 8),
+                  Text(
+                    uncalibrated
+                        ? 'Sensor signal share'
+                        : 'Baseline-adjusted signal share',
                   ),
                 ],
               );
@@ -228,7 +325,7 @@ class _MotionReadings extends StatelessWidget {
     required this.scaled,
   });
   final String title;
-  final List<double> accel, gyro;
+  final List<double>? accel, gyro;
   final bool scaled;
 
   @override
@@ -237,11 +334,15 @@ class _MotionReadings extends StatelessWidget {
     children: [
       Text(title, style: Theme.of(context).textTheme.titleLarge),
       const SizedBox(height: 12),
-      Text('Acceleration · ${scaled ? 'g' : 'raw counts'}'),
-      _vector(accel),
-      const SizedBox(height: 12),
-      Text('Angular velocity · ${scaled ? '°/s' : 'raw counts'}'),
-      _vector(gyro),
+      if (accel == null || gyro == null)
+        const Text('Sensor readings unavailable in this stream')
+      else ...[
+        Text('Acceleration · ${scaled ? 'g' : 'raw counts'}'),
+        _vector(accel!),
+        const SizedBox(height: 12),
+        Text('Angular velocity · ${scaled ? '°/s' : 'raw counts'}'),
+        _vector(gyro!),
+      ],
     ],
   );
 
@@ -262,9 +363,10 @@ class _MotionReadings extends StatelessWidget {
 }
 
 class _HeelGraph extends CustomPainter {
-  const _HeelGraph(this.points, this.color);
+  const _HeelGraph(this.points, this.color, {this.left = false});
   final List<HeelPoint> points;
   final Color color;
+  final bool left;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -284,29 +386,41 @@ class _HeelGraph extends CustomPainter {
       ..color = color
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
+    var connected = false;
     for (var i = 0; i < points.length; i++) {
+      final adc = left ? points[i].leftAdc : points[i].adc;
+      if (adc == null) {
+        connected = false;
+        continue;
+      }
       final x =
           (1 - (end - points[i].receivedAt).inMilliseconds / 10000).clamp(
             0.0,
             1.0,
           ) *
           size.width;
-      final y = (1 - points[i].adc / 4095) * size.height;
-      if (i == 0) {
+      final y = (1 - adc / 4095) * size.height;
+      if (!connected) {
         path.moveTo(x, y);
       } else {
         path.lineTo(x, y);
       }
+      connected = true;
     }
     canvas.drawPath(path, stroke);
-    canvas.drawCircle(
-      Offset(size.width, (1 - points.last.adc / 4095) * size.height),
-      3,
-      Paint()..color = color,
-    );
+    final latest = left ? points.last.leftAdc : points.last.adc;
+    if (latest != null) {
+      canvas.drawCircle(
+        Offset(size.width, (1 - latest / 4095) * size.height),
+        3,
+        Paint()..color = color,
+      );
+    }
   }
 
   @override
   bool shouldRepaint(covariant _HeelGraph oldDelegate) =>
-      oldDelegate.points != points || oldDelegate.color != color;
+      oldDelegate.points != points ||
+      oldDelegate.color != color ||
+      oldDelegate.left != left;
 }

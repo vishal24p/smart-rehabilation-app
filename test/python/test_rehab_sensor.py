@@ -16,6 +16,50 @@ def frame(timestamp=100, fsr=500, acceleration=16384):
 
 
 class SensorParserTest(unittest.TestCase):
+    def test_named_one_and_two_imu_headers_map_heels_without_faking_shin(self):
+        headers = (HEADER.split(',')[:7], HEADER.split(',')[:13])
+        for motion_header in headers:
+            with self.subTest(motion_fields=len(motion_header)):
+                parser = SensorParser(True)
+                parser.process_line(','.join(motion_header + ['fsr_left', 'fsr_right']))
+                motion = frame().split(',')[:len(motion_header)]
+                sample = json.loads(parser.process_line(','.join(motion + ['200', '800'])))
+                self.assertEqual((sample['fsr_left'], sample['fsr']), (200, 800))
+                self.assertEqual(sample['thigh_gyro'], [1, 0, -1])
+                if len(motion_header) == 7:
+                    self.assertIsNone(sample['shin_accel'])
+                    self.assertIsNone(sample['shin_gyro'])
+                    self.assertIn('Missing shin', sample['analytics']['reason'])
+                else:
+                    self.assertEqual(sample['shin_gyro'], [0, 1, 0])
+                self.assertIsNone(parser.process_line(','.join(motion + ['4096', '800'])))
+                self.assertIsNone(parser.process_line(','.join(motion + ['200', '-1'])))
+
+    def test_thigh_only_failure_placeholder_keeps_heels_and_full_stream_restores(self):
+        parser = SensorParser()
+        parser.process_line(','.join(HEADER.split(',')[:7] + ['fsr_left', 'fsr_right']))
+        sample = json.loads(parser.process_line('100,0,0,0,0,0,0,200,800'))
+        self.assertIsNone(sample['thigh_accel'])
+        self.assertIsNone(sample['thigh_gyro'])
+        self.assertEqual((sample['fsr_left'], sample['fsr']), (200, 800))
+        self.assertFalse(parser.processor.motion_available)
+        parser.process_line(HEADER)
+        sample = json.loads(parser.process_line(frame(200)))
+        self.assertTrue(parser.processor.motion_available)
+        self.assertEqual(sample['shin_accel'], [0, 16384, 0])
+
+    def test_dual_header_preserves_motion_and_validates_each_adc(self):
+        parser = SensorParser(True)
+        parser.process_line(HEADER + ',fsr_left')
+        sample = json.loads(parser.process_line(frame(fsr=750) + ',250'))
+        self.assertEqual((sample['fsr'], sample['fsr_left']), (750, 250))
+        self.assertEqual(sample['shin_gyro'], [0, 1, 0])
+        for right, left in ((-1, 100), (4096, 100), (100, -1), (100, 4096)):
+            self.assertIsNone(parser.process_line(frame(200, fsr=right) + ',' + str(left)))
+        self.assertIsNone(parser.process_line(frame(200)))
+        parser.process_line(HEADER)
+        self.assertNotIn('fsr_left', json.loads(parser.process_line(frame(200))))
+
     def parser(self, scaled=False):
         parser = SensorParser(scaled)
         self.assertIsNone(parser.process_line(HEADER + '\r\n'))

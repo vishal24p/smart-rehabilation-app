@@ -84,6 +84,63 @@ void main() {
     await tap(tester, 'Confirm setup');
   }
 
+  testWidgets('losing shin disables motion but leaves heel capture usable', (
+    tester,
+  ) async {
+    await show(tester);
+    await configure(tester);
+    await tester.runAsync(
+      () => fixtures.emit(
+        Map<String, Object?>.from(fixtures.sample(time: 2))
+          ..['shin_accel'] = null
+          ..['shin_gyro'] = null
+          ..['fsr_left'] = 800
+          ..['analytics'] = fixtures.analytics(state: 'ready'),
+      ),
+    );
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Start session'),
+          )
+          .onPressed,
+      isNull,
+    );
+    await state(tester, 'setup');
+    await tap(tester, 'Capture unloaded heels');
+    expect(sent.last['action'], 'heel_unloaded');
+    expect(
+      find.textContaining('Knee metrics need readings from both'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('dual heel capture works without IMU axis setup or weight', (
+    tester,
+  ) async {
+    await show(tester, ranges: false);
+    await tester.runAsync(
+      () => fixtures.emit(
+        fixtures.sample(time: 2)
+          ..['fsr_left'] = 800
+          ..['analytics'] = fixtures.analytics(),
+      ),
+    );
+    await tester.pump();
+    await tap(tester, 'Capture unloaded heels');
+    expect(sent.single['action'], 'heel_unloaded');
+    await state(tester, 'heel_unloaded');
+    expect(
+      find.textContaining('Keep both heel sensors unloaded'),
+      findsOneWidget,
+    );
+    await state(tester, 'setup');
+    await tap(tester, 'Capture loaded heels');
+    expect(sent.last['action'], 'heel_loaded');
+    expect(find.byType(TextField), findsNothing);
+  });
+
   testWidgets(
     'unconfirmed mounting and ranges cannot start; unknown is em dash',
     (tester) async {
