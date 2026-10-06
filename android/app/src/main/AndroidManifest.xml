@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
     <application
-        android:label="rehab_monitor"
+        android:label="Gait Analysis"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
