@@ -13,12 +13,13 @@ void main() {
           (call) async => call.method == 'getExerciseReferences' ? [] : null,
         );
   });
-  testWidgets('home shows two exercises without fabricated results', (
+  testWidgets('home shows exercises and gait without fabricated results', (
     tester,
   ) async {
     await tester.pumpWidget(const MyApp());
     expect(find.text('Squat'), findsOneWidget);
     expect(find.text('Sit-to-stand'), findsOneWidget);
+    expect(find.text('Gait analysis'), findsOneWidget);
     expect(find.textContaining('Praveen'), findsNothing);
     expect(find.textContaining('accuracy'), findsNothing);
     expect(find.textContaining('Completed'), findsNothing);
@@ -29,6 +30,7 @@ void main() {
   for (final entry in {
     'Squat': 'squat',
     'Sit-to-stand': 'sit_to_stand',
+    'Gait analysis': 'gait',
   }.entries) {
     testWidgets('${entry.key} opens its selected live session', (tester) async {
       await tester.pumpWidget(const MyApp());

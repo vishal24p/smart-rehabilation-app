@@ -5,6 +5,7 @@ import 'wearable_connection.dart';
 import 'rehab_session_panel.dart';
 import 'thigh_session_panel.dart';
 import 'exercise_reference.dart';
+import 'gait_session_panel.dart';
 
 class LiveSensorScreen extends StatefulWidget {
   const LiveSensorScreen({this.connection, this.exerciseId, super.key});
@@ -50,7 +51,11 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text(exerciseNames[widget.exerciseId] ?? 'Live sensors'),
+      title: Text(
+        widget.exerciseId == 'gait'
+            ? 'Gait analysis'
+            : exerciseNames[widget.exerciseId] ?? 'Live sensors',
+      ),
       backgroundColor: Colors.white,
     ),
     body: SafeArea(
@@ -61,6 +66,9 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
           child: AnimatedBuilder(
             animation: _connection,
             builder: (context, _) {
+              final gaitMode = widget.exerciseId == 'gait';
+              final contactName = gaitMode ? 'forefoot' : 'heel';
+              final contactTitle = gaitMode ? 'Forefoot' : 'Heel';
               final readings = _connection.latest;
               final analytics = _connection.analytics;
               final rawLeft = readings?.fsrLeft;
@@ -163,7 +171,9 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                       ],
                     ),
                   const SizedBox(height: 12),
-                  if (widget.exerciseId != null)
+                  if (widget.exerciseId == 'gait')
+                    GaitSessionPanel(connection: _connection)
+                  else if (widget.exerciseId != null)
                     ThighSessionPanel(
                       connection: _connection,
                       exerciseId: widget.exerciseId!,
@@ -221,15 +231,15 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                         const SizedBox(height: 24),
                       ],
                       Text(
-                        'Heel ADC · last 10 seconds',
+                        '$contactTitle ADC · last 10 seconds',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      const Text('Right heel'),
+                      Text('Right $contactName'),
                       const SizedBox(height: 12),
                       Semantics(
                         label: _connection.history.isEmpty
-                            ? 'Heel ADC graph has no live readings.'
-                            : 'Heel ADC graph. ${_connection.history.length} recent readings; latest ${_connection.history.last.adc} out of 4095.',
+                            ? '$contactTitle ADC graph has no live readings.'
+                            : '$contactTitle ADC graph. ${_connection.history.length} recent readings; latest ${_connection.history.last.adc} out of 4095.',
                         child: SizedBox(
                           height: 140,
                           child: _connection.history.isEmpty
@@ -256,13 +266,13 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                       if (readings?.fsrLeft != null) ...[
                         const SizedBox(height: 20),
                         Text(
-                          'Left heel ADC · last 10 seconds',
+                          'Left $contactName ADC · last 10 seconds',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: 12),
                         Semantics(
                           label:
-                              'Left heel ADC graph. Latest ${readings!.fsrLeft} out of 4095.',
+                              'Left $contactName ADC graph. Latest ${readings!.fsrLeft} out of 4095.',
                           child: SizedBox(
                             height: 140,
                             child: CustomPaint(
@@ -289,83 +299,85 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Heel signal share',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final side in [
-                        ('Left', readings == null ? null : leftShare),
-                        (
-                          'Right',
-                          readings == null || leftShare == null
-                              ? null
-                              : 100 - leftShare,
-                        ),
-                      ])
-                        Expanded(
-                          child: Semantics(
-                            container: true,
-                            label:
-                                '${side.$1} ${side.$2 == null ? 'unavailable' : '${side.$2}%'}',
-                            excludeSemantics: true,
-                            child: Column(
-                              key: ValueKey(
-                                'heel-${side.$1.toLowerCase()}-share',
-                              ),
-                              children: [
-                                Text(
-                                  side.$1,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.headlineSmall,
+                  if (!gaitMode) ...[
+                    const SizedBox(height: 24),
+                    Text(
+                      'Heel signal share',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final side in [
+                          ('Left', readings == null ? null : leftShare),
+                          (
+                            'Right',
+                            readings == null || leftShare == null
+                                ? null
+                                : 100 - leftShare,
+                          ),
+                        ])
+                          Expanded(
+                            child: Semantics(
+                              container: true,
+                              label:
+                                  '${side.$1} ${side.$2 == null ? 'unavailable' : '${side.$2}%'}',
+                              excludeSemantics: true,
+                              child: Column(
+                                key: ValueKey(
+                                  'heel-${side.$1.toLowerCase()}-share',
                                 ),
-                                const SizedBox(height: 8),
-                                FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Text(
-                                    side.$2 == null ? '—' : '${side.$2}%',
+                                children: [
+                                  Text(
+                                    side.$1,
                                     style: Theme.of(
                                       context,
-                                    ).textTheme.displayMedium,
+                                    ).textTheme.headlineSmall,
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 8),
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      side.$2 == null ? '—' : '${side.$2}%',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.displayMedium,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                  if (readings != null && leftShare != null) ...[
+                      ],
+                    ),
+                    if (readings != null && leftShare != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        leftShare == 50
+                            ? 'Equal shares'
+                            : '${uncalibrated ? 'Higher signal' : 'Higher estimate'}: ${leftShare > 50 ? 'left' : 'right'}',
+                      ),
+                    ] else
+                      Text(
+                        readings == null
+                            ? 'No sensors connected'
+                            : uncalibrated
+                            ? rawLeft == null
+                                  ? 'Left sensor unavailable'
+                                  : rawLeft == 4095 || rawRight == 4095
+                                  ? 'Sensor limit reached'
+                                  : 'No heel signal'
+                            : analytics?.heelShareReason ??
+                                  'Heel comparison unavailable',
+                      ),
                     const SizedBox(height: 8),
                     Text(
-                      leftShare == 50
-                          ? 'Equal shares'
-                          : '${uncalibrated ? 'Higher signal' : 'Higher estimate'}: ${leftShare > 50 ? 'left' : 'right'}',
+                      uncalibrated
+                          ? 'Sensor signal share'
+                          : 'Baseline-adjusted signal share',
                     ),
-                  ] else
-                    Text(
-                      readings == null
-                          ? 'No sensors connected'
-                          : uncalibrated
-                          ? rawLeft == null
-                                ? 'Left sensor unavailable'
-                                : rawLeft == 4095 || rawRight == 4095
-                                ? 'Sensor limit reached'
-                                : 'No heel signal'
-                          : analytics?.heelShareReason ??
-                                'Heel comparison unavailable',
-                    ),
-                  const SizedBox(height: 8),
-                  Text(
-                    uncalibrated
-                        ? 'Sensor signal share'
-                        : 'Baseline-adjusted signal share',
-                  ),
+                  ],
                 ],
               );
             },

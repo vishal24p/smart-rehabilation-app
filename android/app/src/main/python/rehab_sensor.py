@@ -28,10 +28,16 @@ class SensorParser:
         self._header = HEADER
         self._last_timestamp = None
 
+    def _invalid_frame(self, reason: str) -> None:
+        gait = self.processor.gait
+        if gait.state in ('forefoot_unloaded', 'forefoot_loaded', 'standing', 'recording', 'active'):
+            gait.interrupt(reason + '; repeat gait calibration.')
+        return None
+
     def process_line(self, line: str) -> str | None:
         line = line.rstrip('\r\n')
         if len(line.encode('utf-8')) > MAX_FRAME_BYTES:
-            return None
+            return self._invalid_frame('Gait sensor frame exceeds the supported length')
         fields = tuple(field.strip() for field in line.split(','))
         if fields in (HEADER, DUAL_HEADER, THIGH_HEADER, NAMED_DUAL_HEADER):
             if self._header_received:
@@ -50,22 +56,22 @@ class SensorParser:
         if not self._header_received:
             return None
         if len(fields) != len(self._header):
-            return None
+            return self._invalid_frame('Gait frame has missing or unexpected channels')
         if any(re.fullmatch(r'[+-]?[0-9]+', field) is None for field in fields):
-            return None
+            return self._invalid_frame('Gait frame contains a non-integer sensor value')
         try:
             values = [int(field) for field in fields]
         except ValueError:
-            return None
+            return self._invalid_frame('Gait frame contains an invalid sensor value')
         thigh_only = self._header == THIGH_HEADER
         motion_end = 7 if thigh_only else 13
         named_heels = self._header in (THIGH_HEADER, NAMED_DUAL_HEADER)
         timestamp = values[0]
         fsr = values[motion_end + 1] if named_heels else values[motion_end]
         if not 0 <= timestamp <= 0xFFFFFFFF or any(not 0 <= value <= 4095 for value in values[motion_end:]):
-            return None
+            return self._invalid_frame('Gait timestamp or heel reading is out of range')
         if any(not -32768 <= value <= 32767 for value in values[1:motion_end]):
-            return None
+            return self._invalid_frame('Gait IMU reading is out of range')
         if timestamp == self._last_timestamp:
             return None
         restart = self._last_timestamp is not None and timestamp < self._last_timestamp

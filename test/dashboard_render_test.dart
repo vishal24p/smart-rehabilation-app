@@ -22,6 +22,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Squat'), findsOneWidget);
     expect(find.text('Sit-to-stand'), findsOneWidget);
+    expect(find.text('Gait analysis'), findsOneWidget);
     expect(find.text('78%'), findsNothing);
     expect(tester.takeException(), isNull);
   });

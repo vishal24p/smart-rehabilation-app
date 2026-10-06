@@ -139,7 +139,9 @@ class RehabProcessing(
     companion object {
         private val actions = setOf("configure", "heel_unloaded", "heel_loaded", "standing", "movement",
             "finish_movement", "start", "end", "retry", "thigh_reference_begin", "thigh_reference_finish",
-            "thigh_session_begin", "thigh_session_end", "thigh_cancel")
+            "thigh_session_begin", "thigh_session_end", "thigh_cancel", "gait_configure",
+            "gait_forefoot_unloaded", "gait_forefoot_loaded", "gait_standing", "gait_reference_begin",
+            "gait_reference_finish", "gait_session_begin", "gait_session_end", "gait_cancel")
 
         fun validateCommand(arguments: Any?): Pair<String, Map<*, *>?> {
             require(arguments is Map<*, *>) { "Session command must contain an action." }
@@ -156,13 +158,36 @@ class RehabProcessing(
                     require(reference["exercise_id"] == config["exercise_id"]) { "Reference must match the exercise." }
                 }
             }
-            if (action == "configure") {
+            if (action in setOf("gait_reference_begin", "gait_session_begin")) {
+                require(config is Map<*, *>) { "Enter distance and comparison tolerance." }
+                val keys = if (action == "gait_session_begin") setOf("distance_m", "tolerance_pct", "reference")
+                    else setOf("distance_m", "tolerance_pct")
+                require(config.keys == keys) { "Provide only distance, tolerance and the required comparison reference." }
+                val distance = config["distance_m"]
+                val tolerance = config["tolerance_pct"]
+                require(distance is Number && distance.toDouble().isFinite() && distance.toDouble() > 0) {
+                    "Distance must be a positive finite number."
+                }
+                require(tolerance is Number && tolerance.toDouble().isFinite() && tolerance.toDouble() > 0 && tolerance.toDouble() <= 100) {
+                    "Tolerance must be greater than 0 and at most 100 percent."
+                }
+                if (action == "gait_session_begin") GaitReferencePayload.validate(config["reference"])
+            }
+            if (action == "configure" || action == "gait_configure") {
                 require(config is Map<*, *>) { "Confirm ranges and signed board axes." }
+                if (action == "gait_configure") require(config.keys == setOf("ranges_confirmed", "mounting_confirmed",
+                    "forefoot_mapping_confirmed", "thigh_axis", "shin_axis")) { "Provide exactly the gait confirmations and signed axes." }
                 require(config["ranges_confirmed"] is Boolean && config["mounting_confirmed"] is Boolean) {
                     "Range and mounting confirmations must be boolean values."
                 }
+                if (action == "gait_configure") require(config["forefoot_mapping_confirmed"] is Boolean) {
+                    "Forefoot mapping confirmation must be a boolean value."
+                }
                 for (key in listOf("thigh_axis", "shin_axis")) {
                     val axis = config[key]
+                    if (action == "gait_configure") require(axis is Map<*, *> && axis.keys == setOf("index", "sign")) {
+                        "Each gait axis must contain only index and sign."
+                    }
                     require(axis is Map<*, *> && axis["index"] is Int && axis["index"] in 0..2 &&
                         axis["sign"] is Int && axis["sign"] in setOf(-1, 1)) { "Choose each board axis (0..2) and sign (-1 or 1)." }
                 }

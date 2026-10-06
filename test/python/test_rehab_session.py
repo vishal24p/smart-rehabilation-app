@@ -551,6 +551,16 @@ class QualityBoundaryTest(unittest.TestCase):
 
 
 class CommandTest(unittest.TestCase):
+    def test_gait_command_routing_does_not_change_knee_or_thigh_setup(self):
+        from test_gait_session import CONFIG
+        processor = SessionProcessor()
+        before = processor.snapshot()
+        result = processor.command('gait_configure', CONFIG)
+        self.assertEqual(result['state'], before['state'])
+        self.assertEqual(result['thigh'], before['thigh'])
+        self.assertIsNotNone(processor.gait.config)
+        self.assertIsNone(processor.config)
+
     def test_rejected_commands_preserve_calibrated_active_state(self):
         rig = Rig()
         rig.calibration()

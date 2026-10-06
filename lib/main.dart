@@ -181,7 +181,10 @@ class _Exercises extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 32),
-              for (final exercise in exerciseNames.entries)
+              for (final exercise in {
+                ...exerciseNames,
+                'gait': 'Gait analysis',
+              }.entries)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16),
                   child: FilledButton.tonal(
