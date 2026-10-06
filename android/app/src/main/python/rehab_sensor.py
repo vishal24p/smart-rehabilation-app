@@ -87,5 +87,8 @@ class SensorParser:
             sample['fsr_left'] = values[motion_end]
         elif self._header == DUAL_HEADER:
             sample['fsr_left'] = values[14]
+        if 'fsr_left' in sample:
+            # This wearable's physical heel sides are opposite its CSV labels.
+            sample['fsr'], sample['fsr_left'] = sample['fsr_left'], sample['fsr']
         sample['analytics'] = self.processor.process(sample)
         return json.dumps(sample, separators=(',', ':'))

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'android/app/src/main/python'))
 from rehab_sensor import SensorParser
@@ -24,7 +25,7 @@ class SensorParserTest(unittest.TestCase):
                 parser.process_line(','.join(motion_header + ['fsr_left', 'fsr_right']))
                 motion = frame().split(',')[:len(motion_header)]
                 sample = json.loads(parser.process_line(','.join(motion + ['200', '800'])))
-                self.assertEqual((sample['fsr_left'], sample['fsr']), (200, 800))
+                self.assertEqual((sample['fsr_left'], sample['fsr']), (800, 200))
                 self.assertEqual(sample['thigh_gyro'], [1, 0, -1])
                 if len(motion_header) == 7:
                     self.assertIsNone(sample['shin_accel'])
@@ -41,7 +42,7 @@ class SensorParserTest(unittest.TestCase):
         sample = json.loads(parser.process_line('100,0,0,0,0,0,0,200,800'))
         self.assertIsNone(sample['thigh_accel'])
         self.assertIsNone(sample['thigh_gyro'])
-        self.assertEqual((sample['fsr_left'], sample['fsr']), (200, 800))
+        self.assertEqual((sample['fsr_left'], sample['fsr']), (800, 200))
         self.assertFalse(parser.processor.motion_available)
         parser.process_line(HEADER)
         sample = json.loads(parser.process_line(frame(200)))
@@ -52,7 +53,7 @@ class SensorParserTest(unittest.TestCase):
         parser = SensorParser(True)
         parser.process_line(HEADER + ',fsr_left')
         sample = json.loads(parser.process_line(frame(fsr=750) + ',250'))
-        self.assertEqual((sample['fsr'], sample['fsr_left']), (750, 250))
+        self.assertEqual((sample['fsr'], sample['fsr_left']), (250, 750))
         self.assertEqual(sample['shin_gyro'], [0, 1, 0])
         for right, left in ((-1, 100), (4096, 100), (100, -1), (100, 4096)):
             self.assertIsNone(parser.process_line(frame(200, fsr=right) + ',' + str(left)))
@@ -130,6 +131,40 @@ class SensorParserTest(unittest.TestCase):
 
 
 class ParserAnalyticsTest(unittest.TestCase):
+    def test_physical_heel_mapping_reaches_processor_and_calibrated_shares(self):
+        full_motion = HEADER.split(',')[:13]
+        for header in (HEADER.split(',')[:7] + ['fsr_left', 'fsr_right'],
+                       full_motion + ['fsr_left', 'fsr_right'],
+                       HEADER.split(',') + ['fsr_left']):
+            with self.subTest(header=header):
+                processor = SessionProcessor()
+                parser = SensorParser(processor=processor)
+                parser.process_line(','.join(header))
+                timestamp = 100
+
+                def feed(wire_left, wire_right):
+                    nonlocal timestamp
+                    motion_count = 7 if len(header) == 9 else 13
+                    motion = frame(timestamp).split(',')[:motion_count]
+                    heels = ([wire_right, wire_left] if header[-2:] == ['fsr', 'fsr_left']
+                             else [wire_left, wire_right])
+                    timestamp += 50_000
+                    return json.loads(parser.process_line(','.join(motion + list(map(str, heels)))))
+
+                processor.command('heel_unloaded')
+                for _ in range(42):
+                    feed(100, 100)
+                processor.command('heel_loaded')
+                for _ in range(42):
+                    feed(900, 900)
+                with patch.object(processor, 'process', wraps=processor.process) as processing:
+                    sample = feed(800, 200)
+                    received = processing.call_args.args[0]
+                    self.assertEqual((received['fsr_left'], received['fsr']), (200, 800))
+                self.assertEqual((sample['fsr_left'], sample['fsr']), (200, 800))
+                self.assertEqual(sample['analytics']['heel_share_left'], 12.5)
+                self.assertEqual(sample['analytics']['heel_share_right'], 87.5)
+
     def test_every_sample_has_analytics_without_changing_raw_fields(self):
         processor = SessionProcessor()
         parser = SensorParser(processor=processor)
