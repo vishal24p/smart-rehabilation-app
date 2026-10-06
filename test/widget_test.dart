@@ -45,18 +45,15 @@ void main() {
       expect(find.text('Your exercises'), findsOneWidget);
     });
   }
-  testWidgets('home opens references and generic live readings', (
+  testWidgets('navigation opens registration and sensors exclusively', (
     tester,
   ) async {
     await tester.pumpWidget(const MyApp());
-    await tester.scrollUntilVisible(find.text('Exercise references'), 100);
-    await tester.tap(find.text('Exercise references'));
+    expect(find.byType(NavigationRail), findsOneWidget);
+    await tester.tap(find.text('Register'));
     await tester.pumpAndSettle();
     expect(find.byType(ExerciseReferenceScreen), findsOneWidget);
-    await tester.tap(find.byType(BackButton));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Live sensors'), 100);
-    await tester.tap(find.text('Live sensors'));
+    await tester.tap(find.text('Sensors'));
     await tester.pumpAndSettle();
     expect(
       tester.widget<LiveSensorScreen>(find.byType(LiveSensorScreen)).exerciseId,
@@ -76,11 +73,32 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await tester.pumpWidget(const MyApp());
-      await tester.scrollUntilVisible(find.text('Live sensors'), 100);
+      await tester.tap(find.text('Sensors'));
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      final rect = tester.getRect(find.text('Live sensors'));
+      final rect = tester.getRect(find.text('Sensors'));
       expect(rect.left, greaterThanOrEqualTo(0));
       expect(rect.right, lessThanOrEqualTo(size.width));
     });
   }
+
+  testWidgets('resizing navigation retains active registration screen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MyApp());
+    await tester.tap(find.text('Register'));
+    await tester.pumpAndSettle();
+    final before = tester.state(find.byType(ExerciseReferenceScreen));
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpAndSettle();
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(
+      identical(tester.state(find.byType(ExerciseReferenceScreen)), before),
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

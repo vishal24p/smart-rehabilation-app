@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'exercise_reference.dart';
-import 'exercise_reference_screen.dart';
 import 'wearable_connection.dart';
 
 class SessionZeroCountdown extends StatelessWidget {
@@ -89,19 +88,6 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
     }
   }
 
-  Future<void> _references() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => ExerciseReferenceScreen(
-          exerciseId: widget.exerciseId,
-          connection: widget.connection,
-          store: _store,
-        ),
-      ),
-    );
-    if (mounted) await _load();
-  }
-
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.connection,
@@ -119,14 +105,7 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            exerciseNames[widget.exerciseId]!,
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Standing-relative thigh tilt. This is not knee angle or an assessment of exercise correctness.',
-          ),
+          const Text('Thigh movement · not knee angle'),
           if (_loading)
             const Padding(
               padding: EdgeInsets.all(16),
@@ -140,18 +119,10 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
             ),
           ] else if (!_loading && _reference == null) ...[
             const SizedBox(height: 12),
-            const Text(
-              'Record a healthy-thigh reference for this exercise first.',
-            ),
-            OutlinedButton(
-              onPressed: pending ? null : _references,
-              child: const Text('Record exercise reference'),
-            ),
+            const Text('Set a reference in the Register tab.'),
           ] else if (_reference != null) ...[
             const SizedBox(height: 12),
-            Text(
-              'Saved reference range: ${_reference!.peakDeg.toStringAsFixed(1)}°',
-            ),
+            _metric('Saved range', _degrees(_reference!.peakDeg)),
             if (state == 'zeroing') ...[
               const SizedBox(height: 16),
               SessionZeroCountdown(progress: current!.zeroProgress),
@@ -168,6 +139,9 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
               const Text('Thigh readings unavailable. Check the sensor.'),
             const SizedBox(height: 12),
             FilledButton(
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+              ),
               onPressed:
                   !_loading &&
                       _error == null &&
@@ -186,27 +160,40 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
               child: const Text('Start exercise'),
             ),
             if (running)
-              OutlinedButton(
-                onPressed: pending
-                    ? null
-                    : () => connection.sendSessionCommand(
-                        state == 'active'
-                            ? 'thigh_session_end'
-                            : 'thigh_cancel',
-                      ),
-                child: Text(state == 'active' ? 'End exercise' : 'Cancel'),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(52),
+                  ),
+                  onPressed: pending
+                      ? null
+                      : () => connection.sendSessionCommand(
+                          state == 'active'
+                              ? 'thigh_session_end'
+                              : 'thigh_cancel',
+                        ),
+                  child: Text(state == 'active' ? 'End exercise' : 'Cancel'),
+                ),
               ),
-            const SizedBox(height: 16),
-            Text('Completed repetitions: ${current?.repetitions ?? 0}'),
-            Text('Thigh tilt: ${_degrees(current?.tiltDeg)}'),
-            Text('Latest range: ${_degrees(current?.latestPeakDeg)}'),
-            Text(
-              'Difference from reference: ${_degrees(current?.differenceDeg)}',
+            const SizedBox(height: 24),
+            Semantics(
+              label: 'Completed repetitions: ${current?.repetitions ?? 0}',
+              excludeSemantics: true,
+              child: Row(
+                children: [
+                  const Expanded(child: Text('Repetitions')),
+                  Text(
+                    '${current?.repetitions ?? 0}',
+                    style: Theme.of(context).textTheme.displaySmall,
+                  ),
+                ],
+              ),
             ),
-            TextButton(
-              onPressed: running || pending ? null : _references,
-              child: const Text('Edit exercise reference'),
-            ),
+            const Divider(height: 24),
+            _metric('Thigh tilt', _degrees(current?.tiltDeg)),
+            _metric('Latest range', _degrees(current?.latestPeakDeg)),
+            _metric('Reference difference', _degrees(current?.differenceDeg)),
           ],
         ],
       );
@@ -215,4 +202,16 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
 
   String _degrees(double? value) =>
       value == null ? '—' : '${value.toStringAsFixed(1)}°';
+
+  Widget _metric(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: Text(label)),
+        const SizedBox(width: 16),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ],
+    ),
+  );
 }

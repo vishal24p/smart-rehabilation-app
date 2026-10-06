@@ -192,11 +192,37 @@ void main() {
         repetitions: 1,
       );
       expect(find.text('Zero set. Begin your exercise.'), findsOneWidget);
-      expect(find.text('Completed repetitions: 1'), findsOneWidget);
-      expect(find.text('Latest range: 50.0°'), findsOneWidget);
-      expect(find.text('Difference from reference: 5.0°'), findsOneWidget);
+      expect(find.text('Repetitions'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
+      expect(find.text('Latest range'), findsOneWidget);
+      expect(find.text('50.0°'), findsOneWidget);
+      expect(find.text('Reference difference'), findsOneWidget);
+      expect(find.text('5.0°'), findsOneWidget);
+      expect(find.text('Edit exercise reference'), findsNothing);
     },
   );
+
+  testWidgets('missing reference points to Register without another route', (
+    tester,
+  ) async {
+    records = [];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ThighSessionPanel(
+            connection: connection,
+            exerciseId: 'squat',
+            store: store,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Set a reference in the Register tab.'), findsOneWidget);
+    expect(find.text('Record exercise reference'), findsNothing);
+    expect(find.text('Edit exercise reference'), findsNothing);
+    expect(find.byType(ExerciseReferenceScreen), findsNothing);
+  });
 
   testWidgets(
     'countdown respects reduced motion and reference page fits large text',

@@ -118,7 +118,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Exercise references')),
+    appBar: AppBar(title: const Text('Register exercise')),
     body: SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -145,7 +145,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                 padding: const EdgeInsets.all(24),
                 children: [
                   const Text(
-                    'Record each exercise with the sensor on your healthy thigh. Saved references are personal movement examples.',
+                    'Place the sensor on your healthy thigh. Record one complete movement.',
                   ),
                   const SizedBox(height: 20),
                   DropdownButtonFormField<String>(
@@ -178,9 +178,16 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                       saved == null
                           ? 'Not recorded'
                           : 'Saved reference: ${saved.peakDeg.toStringAsFixed(1)}°',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
                   if (_message != null)
-                    Semantics(liveRegion: true, child: Text(_message!)),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(_message!),
+                      ),
+                    ),
                   if (_error != null) ...[
                     Text(_error!),
                     if (!capturing)
@@ -190,9 +197,13 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                       ),
                   ],
                   const SizedBox(height: 16),
-                  Text(_connection.message),
+                  Text(live ? 'Wearable connected' : _connection.message),
+                  const SizedBox(height: 8),
                   if (!live)
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                      ),
                       onPressed: _connection.active || pending
                           ? null
                           : () => _connection.connect(scaleConfirmed: true),
@@ -207,7 +218,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                     Semantics(
                       liveRegion: true,
                       child: const Text(
-                        'Zero set. Perform one complete movement and return standing.',
+                        'Zero set. Move once, then return standing.',
                       ),
                     ),
                   if (current?.reason != null)
@@ -216,6 +227,9 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                     Text(_connection.commandError!),
                   if (!capturing)
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                      ),
                       onPressed:
                           live &&
                               available &&
@@ -232,12 +246,15 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                           : null,
                       child: Text(
                         saved == null
-                            ? 'Record healthy-thigh reference'
+                            ? 'Record reference'
                             : 'Re-record reference',
                       ),
                     ),
                   if (state == 'recording')
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                      ),
                       onPressed: pending
                           ? null
                           : () => _connection.sendSessionCommand(
@@ -252,6 +269,9 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     FilledButton(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                      ),
                       onPressed: pending || !live
                           ? null
                           : () => _save(current.recordedPeakDeg!),
@@ -259,12 +279,19 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                     ),
                   ],
                   if (capturing)
-                    OutlinedButton(
-                      onPressed: pending
-                          ? null
-                          : () =>
-                                _connection.sendSessionCommand('thigh_cancel'),
-                      child: const Text('Cancel recording'),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                        ),
+                        onPressed: pending
+                            ? null
+                            : () => _connection.sendSessionCommand(
+                                'thigh_cancel',
+                              ),
+                        child: const Text('Cancel recording'),
+                      ),
                     ),
                   if (_saving) const Text('Saving reference…'),
                 ],
