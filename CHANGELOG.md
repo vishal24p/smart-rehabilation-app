@@ -15,6 +15,7 @@
 - Recover reference recording after short sample gaps and reject unstable zero captures.
 
 ### Fixed
+- Keep Android Wi-Fi approval requests open instead of cancelling after 20 seconds; stop repeated prompts after failure and reuse an already joined wearable network.
 - Limit I2C clock-stretch waits in the supplied ESP8266 firmware to reduce multi-second streaming stalls when the MPU bus fails.
 - Automatically recover reference recording and exercises after sample gaps up to one second, preserving completed repetitions and discarding partial movements; restart standing-zero countdowns without another tap.
 - Start reference recording and exercises without inheriting sample gaps from before the new capture; longer gaps still freeze completed results safely.

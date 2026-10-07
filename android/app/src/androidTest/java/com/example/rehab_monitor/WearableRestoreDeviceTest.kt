@@ -3,6 +3,9 @@ package com.example.rehab_monitor
 import android.test.AndroidTestCase
 import android.test.ActivityInstrumentationTestCase2
 import android.view.WindowManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.os.Parcel
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
@@ -39,6 +42,60 @@ class WearableRestoreDeviceTest : AndroidTestCase() {
 
 @Suppress("DEPRECATION")
 class WearableRecoveryDeviceTest : ActivityInstrumentationTestCase2<MainActivity>(MainActivity::class.java) {
+    fun testUnavailableStopsOnceWithoutRetryAndIgnoresStaleCallbacks() {
+        val screen = activity
+        val events = mutableListOf<String>()
+        val active = WearableConnection::class.java.getDeclaredField("active").apply { isAccessible = true }
+        val generation = WearableConnection::class.java.getDeclaredField("generation").apply { isAccessible = true }
+        lateinit var connection: WearableConnection
+        lateinit var pending: ConnectivityManager.NetworkCallback
+        var stoppedGeneration = 0L
+        instrumentation.runOnMainSync {
+            connection = WearableConnection(screen) { events.add(it) }
+            active.setBoolean(connection, true)
+            generation.setLong(connection, 7)
+            connection.networkObserver(6).onUnavailable() // An old denial cannot cancel current approval.
+            pending = connection.networkObserver(7)
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync {
+            assertTrue(active.getBoolean(connection))
+            assertTrue(events.isEmpty())
+            pending.onUnavailable()
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync {
+            assertFalse(active.getBoolean(connection))
+            stoppedGeneration = generation.getLong(connection)
+            assertEquals("error", JSONObject(events.single()).getString("status"))
+            assertTrue(JSONObject(events.single()).getString("message").contains("Open Wi-Fi settings"))
+            pending.onUnavailable() // A duplicate denial must not emit or restart.
+        }
+        Thread.sleep(1300)
+        instrumentation.runOnMainSync {
+            assertEquals(stoppedGeneration, generation.getLong(connection))
+            assertEquals(1, events.size)
+        }
+    }
+
+    fun testJoinedNetworkSelectionRejectsUnknownAndUnrelatedSsids() {
+        val parcel = Parcel.obtain()
+        parcel.writeInt(41)
+        parcel.setDataPosition(0)
+        val unrelated = Network.CREATOR.createFromParcel(parcel)
+        parcel.setDataPosition(0)
+        parcel.writeInt(42)
+        parcel.setDataPosition(0)
+        val wearable = Network.CREATOR.createFromParcel(parcel)
+        parcel.recycle()
+        assertEquals(wearable, WearableConnection.findWearableNetwork(listOf(
+            unrelated to "Other Wi-Fi", wearable to "\"REHAB-WEARABLE\"")))
+        assertEquals(wearable, WearableConnection.findWearableNetwork(listOf(wearable to "REHAB-WEARABLE")))
+        assertNull(WearableConnection.findWearableNetwork(listOf(
+            unrelated to "Other Wi-Fi", wearable to "<unknown ssid>")))
+        assertNull(WearableConnection.findWearableNetwork(listOf(wearable to null)))
+    }
+
     fun testStaleRetriesAndDisconnectedDelayedRetryAreIgnored() {
         val screen = activity
         val events = mutableListOf<String>()

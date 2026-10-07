@@ -57,6 +57,10 @@ the attempt and require a fresh zero.
    password `rehab1234`. It provides no internet; stay connected to it.
    On older Android versions, join through **Open Wi-Fi settings**, return and
    connect again.
+   If already joined to that network, the app uses the existing Wi-Fi connection.
+   The Android approval prompt has no app-imposed 20-second deadline. If the
+   request is declined or fails, retry explicitly or open Wi-Fi settings; the app
+   does not repeatedly reopen the prompt.
 4. Expand **Sensor details**. Move thigh/shin sensors and press each heel sensor;
    verify the correct physical side's readings change.
 5. In **Settings**, connect and tap **Capture unloaded sensors** with both heels

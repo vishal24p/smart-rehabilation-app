@@ -9,6 +9,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
+import android.net.wifi.WifiInfo
 import android.net.wifi.WifiNetworkSpecifier
 import android.location.LocationManager
 import android.os.Build
@@ -54,7 +55,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         val permissions = when {
             Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
             Build.VERSION.SDK_INT >= 31 -> arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
-            Build.VERSION.SDK_INT >= 29 -> arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            Build.VERSION.SDK_INT >= 26 -> arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
             else -> emptyArray()
         }
         if (permissions.any { activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
@@ -76,23 +77,56 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     private fun requestNetwork(token: Long) {
         if (!active || token != generation) return
         if (!wifi.isWifiEnabled) { fail("wifi_disabled", "Turn on Wi-Fi and retry."); return }
-        if (Build.VERSION.SDK_INT in 29..32 &&
-            !(activity.getSystemService(Context.LOCATION_SERVICE) as LocationManager).isLocationEnabled) {
-            fail("location_disabled", "Turn on Location services for this Android version's Wi-Fi connection, then retry.")
-            return
+        if (Build.VERSION.SDK_INT in 26..32) {
+            val location = activity.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val enabled = if (Build.VERSION.SDK_INT >= 28) location.isLocationEnabled
+                else location.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                    location.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            if (!enabled) {
+                fail("location_disabled", "Turn on Location services for this Android version's Wi-Fi connection, then retry.")
+                return
+            }
         }
         val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        if (Build.VERSION.SDK_INT >= 29) {
+        val wifiNetworks = connectivity.allNetworks.mapNotNull { network ->
+            connectivity.getNetworkCapabilities(network)?.takeIf {
+                it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            }?.let { network to it }
+        }
+        val joinedNetwork = findWearableNetwork(wifiNetworks.map { (network, capabilities) ->
+            network to if (Build.VERSION.SDK_INT >= 31) {
+                (capabilities.transportInfo as? WifiInfo)?.ssid
+            } else if (wifiNetworks.size == 1) wifi.connectionInfo?.ssid else null
+        })
+        if (joinedNetwork == null && Build.VERSION.SDK_INT >= 29) {
             request.setNetworkSpecifier(WifiNetworkSpecifier.Builder().setSsid("REHAB-WEARABLE")
                 .setWpa2Passphrase("rehab1234").build())
         }
-        val observer = object : ConnectivityManager.NetworkCallback() {
+        val observer = networkObserver(token, joinedNetwork)
+        callback = observer
+        try {
+            if (joinedNetwork != null) {
+                connectivity.registerNetworkCallback(request.build(), observer)
+                startStream(joinedNetwork, token)
+            } else if (Build.VERSION.SDK_INT >= 29) connectivity.requestNetwork(request.build(), observer)
+            else fail("join_wifi", "Join REHAB-WEARABLE in Wi-Fi settings, then retry.")
+        } catch (_: SecurityException) {
+            fail("permission_denied", "Wi-Fi access was denied. Check permissions and retry.")
+        } catch (_: RuntimeException) {
+            fail("network_unavailable", "Wi-Fi connection could not start. Open Wi-Fi settings and retry.")
+        }
+    }
+
+    internal fun networkObserver(token: Long, joinedNetwork: Network? = null): ConnectivityManager.NetworkCallback =
+        object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = main.post {
-                if (active && token == generation && stream == null) startStream(network, token)
+                if (active && token == generation && stream == null &&
+                    (joinedNetwork == null || joinedNetwork == network)) startStream(network, token)
             }.let { Unit }
             override fun onUnavailable() = main.post {
-                retryNetwork(token, "Wearable Wi-Fi unavailable. Power on the wearable; reconnecting…")
+                if (active && token == generation) fail("network_unavailable",
+                    "Wi-Fi connection was declined or could not complete. Open Wi-Fi settings, join REHAB-WEARABLE, then retry.")
             }.let { Unit }
             override fun onLost(network: Network) = main.post {
                 if (active && token == generation && selectedNetwork == network) {
@@ -100,23 +134,6 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 }
             }.let { Unit }
         }
-        callback = observer
-        try {
-            if (Build.VERSION.SDK_INT >= 29) connectivity.requestNetwork(request.build(), observer, 20000)
-            else {
-                val connectedWifi = connectivity.allNetworks.firstOrNull {
-                    connectivity.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-                }
-                if (connectedWifi == null) { fail("join_wifi", "Join REHAB-WEARABLE in Wi-Fi settings, then retry."); return }
-                connectivity.registerNetworkCallback(request.build(), observer)
-                startStream(connectedWifi, token)
-            }
-        } catch (_: SecurityException) {
-            fail("permission_denied", "Wi-Fi access was denied. Check permissions and retry.")
-        } catch (_: RuntimeException) {
-            fail("network_unavailable", "Wi-Fi connection could not start. Open Wi-Fi settings and retry.")
-        }
-    }
 
     private fun retryNetwork(token: Long, message: String) {
         if (!active || token != generation) return
@@ -281,6 +298,9 @@ class WearableConnection(private val activity: Activity, private val event: (Str
 
     companion object {
         const val PERMISSION_REQUEST = 6401
+
+        internal fun findWearableNetwork(candidates: List<Pair<Network, String?>>): Network? =
+            candidates.firstOrNull { (_, ssid) -> ssid == "REHAB-WEARABLE" || ssid == "\"REHAB-WEARABLE\"" }?.first
 
         internal fun restoreHeelZero(session: PyObject, json: PyObject, zero: Map<*, *>) {
             val validated = AppSettingsPayload.validateHeelZero(zero)
