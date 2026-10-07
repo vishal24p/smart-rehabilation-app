@@ -221,16 +221,17 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                   if (state == 'zeroing')
                     SessionZeroCountdown(progress: current!.zeroProgress),
                   if (state == 'recording') ...[
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        current?.recordedPeakDeg == null
-                            ? 'Zero set. Bend at least 30°, pause briefly, then return standing.'
-                            : finishReady
-                            ? 'Movement captured. Ready to finish.'
-                            : 'Movement captured. Return standing.',
+                    if (current?.reason == null)
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          current?.recordedPeakDeg == null
+                              ? 'Zero set. Bend at least 30°, pause briefly, then return standing.'
+                              : finishReady
+                              ? 'Movement captured. Ready to finish.'
+                              : 'Movement captured. Return standing.',
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 12),
                     Text(
                       'Thigh tilt: ${current?.tiltDeg == null ? '—' : '${current!.tiltDeg!.toStringAsFixed(1)}°'}',

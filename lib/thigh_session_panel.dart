@@ -215,7 +215,7 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
               const SizedBox(height: 16),
               SessionZeroCountdown(progress: current!.zeroProgress),
             ],
-            if (state == 'active')
+            if (state == 'active' && current?.reason == null)
               Semantics(
                 liveRegion: true,
                 child: const Text('Zero set. Begin your exercise.'),

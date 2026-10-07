@@ -174,10 +174,10 @@ class ThighProcessor:
             self._clear_cycle()
             if self.state == 'zeroing':
                 self.zero_progress = 0.0
-                self.reason = f'Thigh sample gap {dt*1000:.0f} ms; stand still to restart session zero.'
+                self.reason = 'Stand still to continue.'
             else:
                 self.recovering_motion = True
-                self.reason = f'Thigh sample gap {dt*1000:.0f} ms; return upright and hold still to resume.'
+                self.reason = 'Stand upright and hold still to continue.'
         self.last_t = t
         accel, gyro = sample.get('thigh_accel'), sample.get('thigh_gyro')
         if accel is None or gyro is None:
@@ -207,7 +207,12 @@ class ThighProcessor:
                 self.gravity = _unit(blended)
             self.gravity_t = t
         elif (t-self.gravity_t)/1e6 > GRAVITY_TIMEOUT_S:
-            return self.interrupt('Thigh gravity correction unavailable; set session zero again.')
+            self.recovering_motion = True
+            self.capture = []
+            self.tilt = None
+            self._clear_cycle()
+            self.reason = 'Stand upright and hold still to continue.'
+            return self.snapshot()
         dot = sum(a*b for a, b in zip(self.gravity, self.zero_gravity))
         self.tilt = math.degrees(math.acos(max(-1.0, min(1.0, dot))))
         self._cycle(t)
@@ -217,8 +222,6 @@ class ThighProcessor:
         if not gravity_valid:
             self.capture = []
             self.tilt = None
-            if (t-self.gravity_t)/1e6 > GRAVITY_TIMEOUT_S:
-                return self.interrupt('Thigh gravity correction unavailable; set session zero again.')
             return self.snapshot()
         measured = _unit(accel)
         self.gravity_t = t
