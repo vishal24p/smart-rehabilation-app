@@ -80,9 +80,11 @@ class SensorParser:
             'shin_gyro': None if thigh_only else [value / gyro for value in values[10:13]],
             'fsr': fsr, 'scaled': self.scale_confirmed,
         }
-        if thigh_only and all(value == 0 for value in values[1:7]):
-            # Pasted thigh-only firmware emits six zeros when its IMU read fails.
+        # Supplied firmware emits six zeros when an IMU read fails.
+        if named_heels and all(value == 0 for value in values[1:7]):
             sample['thigh_accel'] = sample['thigh_gyro'] = None
+        if self._header == NAMED_DUAL_HEADER and all(value == 0 for value in values[7:13]):
+            sample['shin_accel'] = sample['shin_gyro'] = None
         if named_heels:
             sample['fsr_left'] = values[motion_end]
         elif self._header == DUAL_HEADER:
