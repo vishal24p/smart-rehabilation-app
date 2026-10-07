@@ -38,6 +38,9 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     private var active = false
     private var pendingPermission: Long? = null
     private var networkRetry = 0
+    private fun diagnostic(message: String) {
+        if (BuildConfig.DEBUG) Log.d("RehabWearable", message)
+    }
 
     fun connect(scaleConfirmed: Boolean) {
         if (active) { status("error", "connection_busy", "Disconnect before starting another connection."); return }
@@ -148,6 +151,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 nextEpoch?.let { socketGeneration.set(it) }
             },
             event = { payload ->
+                if (payload.contains("\"type\":\"status\"")) diagnostic(payload)
                 val socketToken = socketGeneration.get()
                 queue.dispatchCurrent(socketToken) {
                     if (active && token == generation && queue === processing) {
@@ -159,6 +163,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                     }
                 }
             },
+            diagnostic = if (BuildConfig.DEBUG) { message -> diagnostic(message) } else null,
         ).also { it.start() }
     }
 
@@ -185,12 +190,14 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         }
     }
 
-    fun disconnect(completion: (String?) -> Unit = {}) {
+    fun disconnect(origin: String = "manual", completion: (String?) -> Unit = {}) {
+        diagnostic("stop origin=$origin")
         finishConnection("Wearable disconnected.",
             finalStatus = { status("disconnected", "disconnected", "Wearable disconnected.") }, completion = completion)
     }
 
     private fun finishConnection(reason: String, finalStatus: () -> Unit = {}, completion: (String?) -> Unit = {}) {
+        diagnostic("finish reason=$reason")
         activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val pendingClose = closing
         if (!active && processing == null && pendingClose != null) {
@@ -265,8 +272,12 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         }
     }
 
-    private fun status(state: String, code: String, message: String) = event(JSONObject()
-        .put("type", "status").put("status", state).put("code", code).put("message", message).toString())
+    private fun status(state: String, code: String, message: String) {
+        val payload = JSONObject().put("type", "status").put("status", state)
+            .put("code", code).put("message", message).toString()
+        diagnostic(payload)
+        event(payload)
+    }
 
     companion object {
         const val PERMISSION_REQUEST = 6401

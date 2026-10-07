@@ -21,6 +21,117 @@ class WearableStreamTest {
     private val sample = "{\"type\":\"sample\",\"restart\":false}"
     private fun await(latch: CountDownLatch) = assertTrue(latch.await(3, TimeUnit.SECONDS))
 
+    @Test fun diagnostics_distinguish_device_gaps_from_rejected_frames() {
+        for (rejected in listOf(false, true)) {
+            val diagnostics = CopyOnWriteArrayList<String>()
+            val parsed = CopyOnWriteArrayList<String>()
+            val retried = CountDownLatch(1)
+            val rows = "time_us,header\n100000,valid\n" +
+                (if (rejected) "120000,bad\n" else "") + "2802000,valid\n"
+            val stream = WearableStream({ TestSocket(ByteArrayInputStream(rows.toByteArray())) },
+                { { line -> parsed.add(line); if (line.endsWith(",valid"))
+                    "{\"type\":\"sample\",\"time_us\":${line.substringBefore(',')}}" else null } }, {},
+                clock = { 0 }, delay = { retried.countDown(); throw InterruptedException() },
+                diagnostic = { diagnostics.add(it) })
+            stream.start(); await(retried); stream.stop()
+            assertEquals(if (rejected) 4 else 3, parsed.size)
+            assertTrue(diagnostics.any { it.contains("device_gap_us=2702000") &&
+                it.contains("rejected=${if (rejected) 1 else 0}") && it.contains("accepted=2") })
+            assertTrue(diagnostics.none { it.contains(",valid") || it.contains(",bad") })
+        }
+    }
+
+    @Test fun diagnostics_report_stale_socket_without_changing_retry() {
+        var now = 0L
+        val diagnostics = CopyOnWriteArrayList<String>()
+        val retried = CountDownLatch(1)
+        val stream = WearableStream({ TestSocket(object : InputStream() {
+            override fun read(): Int { now += 1000; throw SocketTimeoutException() }
+        }) }, { { sample } }, {}, clock = { now },
+            delay = { retried.countDown(); throw InterruptedException() },
+            diagnostic = { diagnostics.add(it) })
+        stream.start(); await(retried); stream.stop()
+        assertEquals(3000L, now)
+        assertTrue(diagnostics.any { it.contains("stale") && it.contains("accepted=0") })
+        assertTrue(diagnostics.any { it.contains("SocketTimeoutException") })
+    }
+
+    @Test fun diagnostics_separate_parser_latency_rollover_and_rate_limit() {
+        var now = 0L
+        var parsed = 0
+        val diagnostics = CopyOnWriteArrayList<String>()
+        val retried = CountDownLatch(1)
+        val times = listOf(4294960000L, 1000L, 21000L, 41000L)
+        val stream = WearableStream({ TestSocket(ByteArrayInputStream("a\nb\nc\nd\n".toByteArray())) },
+            { { _ ->
+                if (parsed > 0) now += 300
+                "{\"type\":\"sample\",\"time_us\":${times[parsed++]}}"
+            } }, {}, clock = { now },
+            delay = { retried.countDown(); throw InterruptedException() },
+            diagnostic = { diagnostics.add(it) })
+        stream.start(); await(retried); stream.stop()
+        assertEquals(4, parsed)
+        val anomalies = diagnostics.filter { it.startsWith("frame_timing") }
+        assertEquals(1, anomalies.size)
+        assertTrue(anomalies.single().contains("device_event=reset_or_rollover"))
+        assertTrue(anomalies.single().contains("parse_ms=300"))
+        assertTrue(anomalies.single().contains("read_wait_ms=0"))
+        assertTrue(anomalies.single().contains("rejected=0"))
+    }
+
+    @Test fun diagnostics_quiet_after_rejected_stream_recovers() {
+        var now = 0L
+        var parsed = 0
+        val diagnostics = CopyOnWriteArrayList<String>()
+        val retried = CountDownLatch(1)
+        val rows = "0,bad\n" + (1..100).joinToString("") { "${it * 20000},ok\n" }
+        val stream = WearableStream({ TestSocket(ByteArrayInputStream(rows.toByteArray())) },
+            { { line ->
+                now += 20
+                parsed++
+                if (line.endsWith("bad")) null else
+                    "{\"type\":\"sample\",\"time_us\":${line.substringBefore(',')}}"
+            } }, {}, clock = { now },
+            delay = { retried.countDown(); throw InterruptedException() },
+            diagnostic = { diagnostics.add(it) })
+        stream.start(); await(retried); stream.stop()
+        assertEquals(101, parsed)
+        assertEquals(1, diagnostics.count { it.startsWith("frame_timing") })
+    }
+
+    @Test fun diagnostics_distinguish_incoming_rejects_from_socket_silence() {
+        var now = 0L
+        val diagnostics = CopyOnWriteArrayList<String>()
+        val done = CountDownLatch(1)
+        val input = object : InputStream() {
+            override fun read() = throw UnsupportedOperationException()
+            override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                now += 1000
+                "100,bad\n".toByteArray().copyInto(bytes, offset)
+                return 8
+            }
+        }
+        val stream = WearableStream({ TestSocket(input) }, { { null } },
+            { if (it.contains("invalid_protocol")) done.countDown() }, clock = { now },
+            diagnostic = { diagnostics.add(it) })
+        stream.start(); await(done); stream.stop()
+        assertTrue(diagnostics.any { it.startsWith("stale") && it.contains("rejected=2") &&
+            it.contains("receive_idle_ms=0") && it.contains("read_wait_ms=1000") })
+    }
+
+    @Test fun diagnostics_report_slow_rejected_parser_without_payload() {
+        var now = 0L
+        val diagnostics = CopyOnWriteArrayList<String>()
+        val failed = CountDownLatch(1)
+        val stream = WearableStream({ TestSocket(ByteArrayInputStream("100,private\n".toByteArray())) },
+            { { now += 3001; null } }, { if (it.contains("invalid_protocol")) failed.countDown() },
+            clock = { now }, diagnostic = { diagnostics.add(it) })
+        stream.start(); await(failed); stream.stop()
+        assertTrue(diagnostics.any { it.startsWith("parse_timing") && it.contains("parse_ms=3001") })
+        assertTrue(diagnostics.any { it.startsWith("stale") && it.contains("receive_idle_ms=3001") })
+        assertTrue(diagnostics.none { it.contains("private") })
+    }
+
     @Test fun fragmented_and_coalesced_frames() {
         val lines = CopyOnWriteArrayList<String>()
         val retried = CountDownLatch(1)

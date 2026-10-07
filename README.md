@@ -124,6 +124,16 @@ legacy ESP32 streams. CRLF is accepted. The supplied sketches in
 I2C SDA/SCL are GPIO4/5, heel-select outputs GPIO14/12, and shared ADC A0 is 0..1023.
 They send the named dual-heel format below; legacy ESP32 GPIO34/35 wiring is separate.
 Verify the actual firmware/header and MPU configuration before physical-unit use.
+The supplied ESP8266 sketches limit I2C clock stretching to 1 ms per bit. This
+reduces a stuck-clock failure path that otherwise can pause the two MPU reads
+for about 2.7 seconds. This setting does not apply to ESP32 firmware.
+
+For a Register/exercise interruption, Android debug builds log bounded diagnostics
+under `RehabWearable`. Device timestamp gaps, rejected CSV row counts, arrival/parse
+timing, socket failures, and explicit lifecycle stops are logged without raw motion
+or heel readings. These distinguish a sender pause from parser rejection or a
+connection stop. Release builds omit these diagnostics. Inspect them with
+`adb logcat -s RehabWearable:D '*:S'` while reproducing the issue.
 
 ### Two heel sensors
 

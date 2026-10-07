@@ -14,6 +14,7 @@ class WearableStream(
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     private val delay: (Long) -> Unit = { Thread.sleep(it) },
     private val interruptSession: () -> Unit = {},
+    private val diagnostic: ((String) -> Unit)? = null,
 ) {
     class ProtocolException(message: String) : IOException(message)
     private val lock = Any()
@@ -34,6 +35,7 @@ class WearableStream(
     }
 
     private fun emit(value: String) = synchronized(lock) { if (active) event(value) }
+    private fun diagnose(message: String) { runCatching { diagnostic?.invoke(message) } }
     private fun status(state: String, code: String) {
         val message = when (code) {
             "waiting_for_samples" -> "Connected to Wi-Fi. Waiting for sensor readings."
@@ -60,18 +62,27 @@ class WearableStream(
                 if (active) throw IOException("Wearable closed stream")
             } catch (_: InterruptedException) {
                 break
-            } catch (_: ProtocolException) {
+            } catch (error: ProtocolException) {
+                diagnose("transport_failure kind=protocol exception=${error.javaClass.simpleName}")
                 status("error", "invalid_protocol")
                 break
-            } catch (_: ConnectException) {
+            } catch (error: ConnectException) {
                 if (!active) break
+                diagnose("transport_failure kind=connect exception=${error.javaClass.simpleName}")
                 interruptSession()
                 status("reconnecting", "connection_refused")
-            } catch (_: IOException) {
+            } catch (error: IOException) {
                 if (!active) break
+                val reason = when {
+                    error is SocketTimeoutException -> "timeout"
+                    error.message == "Wearable closed stream" -> "peer_closed"
+                    else -> "socket_io"
+                }
+                diagnose("transport_failure kind=io reason=$reason exception=${error.javaClass.simpleName}")
                 interruptSession()
                 status("reconnecting", "connection_lost")
-            } catch (_: RuntimeException) {
+            } catch (error: RuntimeException) {
+                diagnose("transport_failure kind=processing exception=${error.javaClass.simpleName}")
                 status("error", "processing_failed")
                 break
             } finally {
@@ -95,16 +106,34 @@ class WearableStream(
         var receivedFrames = false
         var receivedValid = false
         var pendingRestart = false
+        var accepted = 0L
+        var rejected = 0L
+        var rejectedSinceAccepted = 0L
+        var lastDeviceTime: Long? = null
+        var lastAnomaly: Long? = null
+        var lastReceived = lastValid
+        var readWaitMs = 0L
+        val sampleTimestamp = diagnostic?.let { Regex("\"time_us\"\\s*:\\s*(\\d+)") }
+        val csvTimestamp = diagnostic?.let { Regex("[+-]?[0-9]+") }
         fun checkDeadline() {
             if (clock() - lastValid >= 3000) {
+                if (diagnostic != null) diagnose("stale accepted=$accepted rejected=$rejected last_device_us=$lastDeviceTime accepted_gap_ms=${clock() - lastValid} receive_idle_ms=${clock() - lastReceived} read_wait_ms=$readWaitMs")
                 if (receivedFrames && !receivedValid) throw ProtocolException("No valid samples")
                 throw SocketTimeoutException("Sensor readings stale")
             }
         }
         while (active) {
+            val readStart = if (diagnostic != null) clock() else 0
             val count = try { input.read(buffer) } catch (_: SocketTimeoutException) { 0 }
+            if (diagnostic != null) {
+                readWaitMs = clock() - readStart
+                if (count > 0) lastReceived = clock()
+            }
             checkDeadline()
-            if (count < 0) return
+            if (count < 0) {
+                diagnose("eof accepted=$accepted rejected=$rejected last_device_us=$lastDeviceTime")
+                return
+            }
             for (index in 0 until count) {
                 if (!active) return
                 val byte = buffer[index]
@@ -113,8 +142,32 @@ class WearableStream(
                     frame.reset()
                     receivedFrames = true
                     if (line.toByteArray(Charsets.UTF_8).size > 512) throw ProtocolException("Frame too long")
+                    val parseStart = if (diagnostic != null) clock() else 0
                     val sample = parse(line)
+                    val parseMs = if (diagnostic != null) clock() - parseStart else 0
                     if (sample != null) {
+                        if (diagnostic != null) {
+                            accepted++
+                            val deviceTime = sampleTimestamp!!.find(sample)?.groupValues?.get(1)?.toLongOrNull()
+                            val deviceGap = deviceTime?.let { current -> lastDeviceTime?.let { current - it } }
+                            val arrivalGap = clock() - lastValid
+                            if ((deviceGap != null && (deviceGap < 0 || deviceGap > 250000)) ||
+                                arrivalGap > 250 || parseMs > 250 || rejectedSinceAccepted > 0) {
+                                val now = clock()
+                                if (lastAnomaly == null || now - lastAnomaly >= 1000) {
+                                    val deviceEvent = when {
+                                        deviceGap == null -> "first"
+                                        deviceGap < 0 -> "reset_or_rollover"
+                                        deviceGap > 250000 -> "gap"
+                                        else -> "contiguous"
+                                    }
+                                    diagnose("frame_timing accepted=$accepted rejected=$rejected rejected_since_accepted=$rejectedSinceAccepted previous_device_us=$lastDeviceTime device_us=$deviceTime device_event=$deviceEvent device_gap_us=$deviceGap accepted_gap_ms=$arrivalGap receive_idle_ms=${clock() - lastReceived} read_wait_ms=$readWaitMs parse_ms=$parseMs")
+                                    lastAnomaly = now
+                                }
+                            }
+                            rejectedSinceAccepted = 0
+                            lastDeviceTime = deviceTime
+                        }
                         receivedValid = true
                         lastValid = clock()
                         valid()
@@ -124,6 +177,14 @@ class WearableStream(
                             pendingRestart = false
                             lastEmission = lastValid
                         }
+                    } else if (csvTimestamp?.matches(line.substringBefore(',').trim()) == true) {
+                        rejected++
+                        rejectedSinceAccepted++
+                    }
+                    if (diagnostic != null && sample == null && parseMs > 250 &&
+                        (lastAnomaly == null || clock() - lastAnomaly >= 1000)) {
+                        diagnose("parse_timing accepted=$accepted rejected=$rejected last_device_us=$lastDeviceTime parse_ms=$parseMs receive_idle_ms=${clock() - lastReceived} read_wait_ms=$readWaitMs")
+                        lastAnomaly = clock()
                     }
                 } else {
                     if (frame.size() >= 513) throw ProtocolException("Frame too long")
