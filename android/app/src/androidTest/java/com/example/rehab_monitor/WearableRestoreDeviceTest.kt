@@ -5,7 +5,10 @@ import android.test.ActivityInstrumentationTestCase2
 import android.view.WindowManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.LinkProperties
 import android.os.Parcel
+import java.io.File
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
@@ -42,6 +45,67 @@ class WearableRestoreDeviceTest : AndroidTestCase() {
 
 @Suppress("DEPRECATION")
 class WearableRecoveryDeviceTest : ActivityInstrumentationTestCase2<MainActivity>(MainActivity::class.java) {
+    fun testDiagnosticsAreBoundedAndReceiverStopsWithConnection() {
+        val screen = activity
+        val file = File(screen.filesDir, "wearable-connection.log")
+        val saved = if (file.exists()) file.readBytes() else null
+        val log = WearableConnection::class.java.getDeclaredMethod("diagnostic", String::class.java).apply { isAccessible = true }
+        val start = WearableConnection::class.java.getDeclaredMethod("startWifiDiagnostics").apply { isAccessible = true }
+        val receiver = WearableConnection::class.java.getDeclaredField("wifiDiagnostics").apply { isAccessible = true }
+        try {
+            instrumentation.runOnMainSync {
+                val connection = WearableConnection(screen) {}
+                file.writeText("x".repeat(65 * 1024))
+                log.invoke(connection, "test_diagnostic\nsecond_line")
+                assertTrue(file.length() < 2048)
+                assertTrue(file.readText().contains("test_diagnostic second_line"))
+                start.invoke(connection)
+                assertNotNull(receiver.get(connection))
+                connection.disconnect()
+                assertNull(receiver.get(connection))
+            }
+        } finally {
+            if (saved != null) file.writeBytes(saved) else file.delete()
+        }
+    }
+
+    fun testDiagnosticCallbacksDoNotChangeConnectionAndIgnoreStaleEpochs() {
+        val screen = activity
+        val file = File(screen.filesDir, "wearable-connection.log")
+        val events = mutableListOf<String>()
+        val active = WearableConnection::class.java.getDeclaredField("active").apply { isAccessible = true }
+        val generation = WearableConnection::class.java.getDeclaredField("generation").apply { isAccessible = true }
+        val parcel = Parcel.obtain()
+        parcel.writeInt(43)
+        parcel.setDataPosition(0)
+        val network = Network.CREATOR.createFromParcel(parcel)
+        parcel.recycle()
+        fun countEntries(prefix: String) = if (file.exists()) file.readLines().count { it.contains("$prefix network=$network ") } else 0
+        val capabilitiesBefore = countEntries("wifi_capabilities")
+        val ipBefore = countEntries("wifi_ip")
+        lateinit var connection: WearableConnection
+        instrumentation.runOnMainSync {
+            connection = WearableConnection(screen) { events.add(it) }
+            active.setBoolean(connection, true)
+            generation.setLong(connection, 9)
+            val capabilities = NetworkCapabilities()
+            val properties = LinkProperties()
+            connection.networkObserver(8).onCapabilitiesChanged(network, capabilities)
+            connection.networkObserver(8).onLinkPropertiesChanged(network, properties)
+            connection.networkObserver(9).onCapabilitiesChanged(network, capabilities)
+            connection.networkObserver(9).onLinkPropertiesChanged(network, properties)
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync {
+            assertTrue(active.getBoolean(connection))
+            assertEquals(9L, generation.getLong(connection))
+            assertTrue(events.isEmpty())
+            assertEquals(capabilitiesBefore + 1, countEntries("wifi_capabilities"))
+            assertEquals(ipBefore + 1, countEntries("wifi_ip"))
+            connection.disconnect()
+        }
+    }
+
     fun testUnavailableStopsOnceWithoutRetryAndIgnoresStaleCallbacks() {
         val screen = activity
         val events = mutableListOf<String>()

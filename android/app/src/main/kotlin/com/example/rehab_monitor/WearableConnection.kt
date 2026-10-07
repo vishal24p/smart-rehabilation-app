@@ -3,18 +3,25 @@ package com.example.rehab_monitor
 import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.LinkProperties
+import android.net.NetworkInfo
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiNetworkSpecifier
+import android.net.wifi.SupplicantState
 import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import com.chaquo.python.PyException
@@ -22,6 +29,8 @@ import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.net.InetSocketAddress
+import java.net.Inet4Address
+import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
 
@@ -39,8 +48,49 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     private var active = false
     private var pendingPermission: Long? = null
     private var networkRetry = 0
+    private var wifiDiagnostics: BroadcastReceiver? = null
+    private val diagnosticFile = File(activity.filesDir, "wearable-connection.log")
     private fun diagnostic(message: String) {
-        if (BuildConfig.DEBUG) Log.d("RehabWearable", message)
+        if (!BuildConfig.DEBUG) return
+        val line = message.take(1024).replace('\n', ' ').replace('\r', ' ')
+        Log.d("RehabWearable", line)
+        runCatching {
+            synchronized(diagnosticFile) {
+                if (diagnosticFile.length() > 64 * 1024) diagnosticFile.writeText("Earlier diagnostics rotated.\n")
+                diagnosticFile.appendText("${System.currentTimeMillis()} $line\n")
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startWifiDiagnostics() {
+        if (!BuildConfig.DEBUG || wifiDiagnostics != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    WifiManager.WIFI_STATE_CHANGED_ACTION -> diagnostic("wifi_radio state=${intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, -1)}")
+                    WifiManager.SUPPLICANT_STATE_CHANGED_ACTION -> {
+                        val state = intent.getParcelableExtra<SupplicantState>(WifiManager.EXTRA_NEW_STATE)
+                        val error = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1)
+                        diagnostic("wifi_handshake state=$state error=$error authentication_failed=${error == WifiManager.ERROR_AUTHENTICATING}")
+                    }
+                    WifiManager.NETWORK_STATE_CHANGED_ACTION -> {
+                        val info = intent.getParcelableExtra<NetworkInfo>(WifiManager.EXTRA_NETWORK_INFO)
+                        diagnostic("wifi_link state=${info?.detailedState}")
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+            addAction(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION)
+            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 33) activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+            else activity.registerReceiver(receiver, filter)
+            wifiDiagnostics = receiver
+        }.onFailure { diagnostic("wifi_diagnostics unavailable=${it.javaClass.simpleName}") }
     }
 
     fun connect(scaleConfirmed: Boolean) {
@@ -48,6 +98,8 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         active = true
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         generation++
+        diagnostic("connect_begin generation=$generation sdk=${Build.VERSION.SDK_INT} wifi_enabled=${wifi.isWifiEnabled}")
+        startWifiDiagnostics()
         stoppedSnapshot = null
         processing = RehabProcessing({ pythonProcessor(scaleConfirmed) }, { main.post(it) })
         networkRetry = 0
@@ -59,6 +111,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
             else -> emptyArray()
         }
         if (permissions.any { activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) {
+            diagnostic("permissions requested=${permissions.joinToString()}")
             pendingPermission = generation
             activity.requestPermissions(permissions, PERMISSION_REQUEST)
         } else requestNetwork(generation)
@@ -69,6 +122,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         pendingPermission = null
         if (!active || requestedGeneration != generation) return
         val required = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
+        diagnostic("permission_result granted=${activity.checkSelfPermission(required) == PackageManager.PERMISSION_GRANTED}")
         if (activity.checkSelfPermission(required) != PackageManager.PERMISSION_GRANTED) {
             fail("permission_denied", "Allow nearby Wi-Fi access to connect. On older Android, allow precise location.")
         } else requestNetwork(generation)
@@ -76,6 +130,8 @@ class WearableConnection(private val activity: Activity, private val event: (Str
 
     private fun requestNetwork(token: Long) {
         if (!active || token != generation) return
+        startWifiDiagnostics()
+        diagnostic("wifi_request generation=$token wifi_enabled=${wifi.isWifiEnabled}")
         if (!wifi.isWifiEnabled) { fail("wifi_disabled", "Turn on Wi-Fi and retry."); return }
         if (Build.VERSION.SDK_INT in 26..32) {
             val location = activity.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -105,6 +161,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         }
         val observer = networkObserver(token, joinedNetwork)
         callback = observer
+        diagnostic("wifi_request mode=${if (joinedNetwork != null) "reuse_joined" else "approval"} wifi_networks=${wifiNetworks.size} generation=$token")
         try {
             if (joinedNetwork != null) {
                 connectivity.registerNetworkCallback(request.build(), observer)
@@ -121,17 +178,29 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     internal fun networkObserver(token: Long, joinedNetwork: Network? = null): ConnectivityManager.NetworkCallback =
         object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = main.post {
+                diagnostic("wifi_available network=$network generation=$token current=${active && token == generation}")
                 if (active && token == generation && stream == null &&
                     (joinedNetwork == null || joinedNetwork == network)) startStream(network, token)
             }.let { Unit }
             override fun onUnavailable() = main.post {
+                diagnostic("wifi_unavailable generation=$token current=${active && token == generation}")
                 if (active && token == generation) fail("network_unavailable",
                     "Wi-Fi connection was declined or could not complete. Open Wi-Fi settings, join REHAB-WEARABLE, then retry.")
             }.let { Unit }
             override fun onLost(network: Network) = main.post {
+                diagnostic("wifi_lost network=$network generation=$token selected=${selectedNetwork == network}")
                 if (active && token == generation && selectedNetwork == network) {
                     retryNetwork(token, "Wearable Wi-Fi disconnected. Reconnecting…")
                 }
+            }.let { Unit }
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = main.post {
+                if (active && token == generation) diagnostic("wifi_capabilities network=$network wifi=${capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)} internet=${capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)} validated=${capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}")
+            }.let { Unit }
+            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) = main.post {
+                if (active && token == generation) diagnostic("wifi_ip network=$network interface=${properties.interfaceName} address_count=${properties.linkAddresses.size} ipv4_count=${properties.linkAddresses.count { it.address is Inet4Address }} route_count=${properties.routes.size}")
+            }.let { Unit }
+            override fun onBlockedStatusChanged(network: Network, blocked: Boolean) = main.post {
+                if (active && token == generation) diagnostic("wifi_blocked network=$network blocked=$blocked")
             }.let { Unit }
         }
 
@@ -153,9 +222,17 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         val socketGeneration = AtomicLong(queue.generation)
         stream = WearableStream(
             createSocket = {
+                val started = SystemClock.elapsedRealtime()
+                diagnostic("tcp_connect_begin network=$network endpoint=192.168.4.1:5000 generation=$token")
                 factory.createSocket().also { socket ->
-                    try { socket.connect(InetSocketAddress("192.168.4.1", 5000), 3000) }
-                    catch (error: Exception) { socket.close(); throw error }
+                    try {
+                        socket.connect(InetSocketAddress("192.168.4.1", 5000), 3000)
+                        diagnostic("tcp_connected network=$network duration_ms=${SystemClock.elapsedRealtime() - started}")
+                    } catch (error: Exception) {
+                        diagnostic("tcp_connect_failed kind=${error.javaClass.simpleName} detail=${error.message}")
+                        socket.close()
+                        throw error
+                    }
                 }
             },
             parserFactory = {
@@ -242,6 +319,9 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     }
 
     private fun releaseResources() {
+        diagnostic("resources_release generation=$generation network=$selectedNetwork")
+        wifiDiagnostics?.let { runCatching { activity.unregisterReceiver(it) } }
+        wifiDiagnostics = null
         stream?.stop()
         stream = null
         selectedNetwork = null

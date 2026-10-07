@@ -245,6 +245,14 @@ with increasing/decreasing ADC, reference angle differences, automatic target
 completion, save retries, history after restart, and failed IMU reads. Automated checks
 and APK builds do not establish hardware correctness or clinical accuracy.
 
+Debug builds save Wi-Fi request, handshake/authentication, IP, TCP and lifecycle
+diagnostics in the phone's private `files/wearable-connection.log`, rotated at
+64 KiB. They also appear under the `RehabWearable` logcat tag. No passwords or
+raw sensor readings are recorded. With USB debugging connected, retrieve the file
+with `adb shell run-as com.example.rehab_monitor cat files/wearable-connection.log`.
+Android may expose only a generic connection failure; compare these timestamps
+with Android Wi-Fi system logs for association rejection details.
+
 Live UI: `lib/live_sensor_screen.dart`; channel state: `lib/wearable_connection.dart`.
 Calibration/session panel: `lib/rehab_session_panel.dart`.
 Thigh references/session controls: `lib/exercise_reference_screen.dart`,

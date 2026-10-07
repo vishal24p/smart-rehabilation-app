@@ -24,5 +24,6 @@
 - Retain interrupted workout results when reconnect is requested during disconnect cleanup.
 
 ### Verification
+- Save bounded phone-local debug logs for Wi-Fi joining, authentication, IP setup, TCP connection and app disconnects.
 - Add local Android debug diagnostics for sample timing, rejected rows, socket failures and lifecycle stops.
 - Expand automated checks for sensor processing, reference recovery, target results, persistence and workout lifecycle behavior.
