@@ -48,7 +48,7 @@ class ThighProcessor:
         self.gravity = self.zero_gravity = self.bias = None
         self.gravity_t = None
         self.recording = False
-        self.recovering_reference = False
+        self.recovering_motion = False
         self._clear_cycle()
 
     def _clear_cycle(self):
@@ -59,7 +59,7 @@ class ThighProcessor:
     def snapshot(self):
         return {'state': self.state, 'exercise_id': self.exercise_id, 'reason': self.reason,
                 'zero_progress': self.zero_progress,
-                'tilt_deg': None if self.recovering_reference else self.tilt,
+                'tilt_deg': None if self.recovering_motion else self.tilt,
                 'reference_peak_deg': self.reference_peak, 'recorded_peak_deg': self.recorded_peak,
                 'latest_peak_deg': self.latest_peak,
                 'difference_deg': None if self.latest_peak is None or self.reference_peak is None
@@ -104,11 +104,11 @@ class ThighProcessor:
             self.gravity = self.zero_gravity = self.bias = None
             self.last_t = self.gravity_t = None
             self.recording = action == 'thigh_reference_begin'
-            self.recovering_reference = False
+            self.recovering_motion = False
             self._clear_cycle()
             self.state = 'zeroing'
         elif action == 'thigh_reference_finish':
-            if (self.state != 'recording' or self.recovering_reference or self.recorded_peak is None
+            if (self.state != 'recording' or self.recovering_motion or self.recorded_peak is None
                     or self.tilt is None or self.tilt > TRIAL_RETURN_DEG):
                 return self._error('Complete one bend of at least 30 degrees and return upright first.')
             self.state = 'reference_ready'
@@ -152,7 +152,7 @@ class ThighProcessor:
         self.gravity = self.zero_gravity = self.bias = None
         self.last_t = self.gravity_t = None
         self.zero_progress = 0.0
-        self.recovering_reference = False
+        self.recovering_motion = False
         self._clear_cycle()
         return self.snapshot()
 
@@ -166,14 +166,18 @@ class ThighProcessor:
         if dt < 0:
             return self.interrupt(f'Thigh timestamp reset ({self.last_t} to {t} us); set session zero again.')
         if dt > MAX_GAP_S:
-            if self.state != 'recording' or dt > GRAVITY_TIMEOUT_S:
+            if dt > GRAVITY_TIMEOUT_S:
                 return self.interrupt(f'Thigh sample gap {dt*1000:.0f} ms; set session zero again.')
-            # Reference setup can retry a movement, but never bridge missing time.
-            self.recovering_reference = True
+            # Retry the capture or movement without integrating missing time.
             self.capture = []
             self.tilt = None
             self._clear_cycle()
-            self.reason = f'Thigh sample gap {dt*1000:.0f} ms; return upright and hold still to resume reference.'
+            if self.state == 'zeroing':
+                self.zero_progress = 0.0
+                self.reason = f'Thigh sample gap {dt*1000:.0f} ms; stand still to restart session zero.'
+            else:
+                self.recovering_motion = True
+                self.reason = f'Thigh sample gap {dt*1000:.0f} ms; return upright and hold still to resume.'
         self.last_t = t
         accel, gyro = sample.get('thigh_accel'), sample.get('thigh_gyro')
         if accel is None or gyro is None:
@@ -191,8 +195,8 @@ class ThighProcessor:
         gravity_valid = GRAVITY_MIN_G <= magnitude <= GRAVITY_MAX_G
         if self.state == 'zeroing':
             return self._zero(accel, gyro, gravity_valid, t)
-        if self.recovering_reference:
-            return self._recover_reference(accel, gyro, gravity_valid, t)
+        if self.recovering_motion:
+            return self._recover_motion(accel, gyro, gravity_valid, t)
         corrected = [value-bias for value, bias in zip(gyro, self.bias)]
         self.gravity = _rotate_gravity(self.gravity, corrected, dt)
         if gravity_valid:
@@ -209,7 +213,7 @@ class ThighProcessor:
         self._cycle(t)
         return self.snapshot()
 
-    def _recover_reference(self, accel, gyro, gravity_valid, t):
+    def _recover_motion(self, accel, gyro, gravity_valid, t):
         if not gravity_valid:
             self.capture = []
             self.tilt = None
@@ -220,7 +224,8 @@ class ThighProcessor:
         self.gravity_t = t
         dot = sum(a*b for a, b in zip(measured, self.zero_gravity))
         self.tilt = math.degrees(math.acos(max(-1.0, min(1.0, dot))))
-        if (self.tilt > TRIAL_RETURN_DEG
+        upright_band = TRIAL_RETURN_DEG if self.recording else self.reference['upright_band_deg']
+        if (self.tilt > upright_band
                 or any(abs(value-bias) > GYRO_NOISE_DPS for value, bias in zip(gyro, self.bias))):
             self.capture = []
             return self.snapshot()
@@ -231,7 +236,7 @@ class ThighProcessor:
         if (t-self.capture[0][0])/1e6 >= HOLD_S:
             self.gravity = measured
             self.capture = []
-            self.recovering_reference = False
+            self.recovering_motion = False
             self.reason = None
         return self.snapshot()
 

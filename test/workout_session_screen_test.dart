@@ -209,6 +209,54 @@ void main() {
   });
 
   testWidgets(
+    'short sample gap resumes active counting without restart or result save',
+    (tester) async {
+      await openActiveExercise(tester);
+      const reason =
+          'Readings paused; return upright and hold still to continue.';
+      await tester.runAsync(
+        () => send(thigh('active', reps: 1, reason: reason)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(reason), findsOneWidget);
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(find.text('Start exercise'), findsNothing);
+      expect(find.text('Return to session'), findsNothing);
+      expect(connection.thigh!.tiltDeg, isNull);
+      expect(connection.thigh!.result, isNull);
+      expect(connection.status, WearableStatus.live);
+      expect(owner.hasAttempt, isTrue);
+      expect(owner.record!.exercises, isEmpty);
+      expect(writes.length, 1);
+      expect(nativeStops, 0);
+
+      await tester.runAsync(
+        () => send(thigh('active', reps: 1)..['tilt_deg'] = 0.0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(reason), findsNothing);
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(connection.thigh!.reason, isNull);
+      expect(connection.thigh!.tiltDeg, 0);
+      expect(connection.thigh!.result, isNull);
+      expect(owner.hasAttempt, isTrue);
+      expect(owner.record!.exercises, isEmpty);
+      expect(writes.length, 1);
+      expect(nativeStops, 0);
+      expect(actions, ['thigh_session_begin']);
+      await tester.runAsync(() => send(thigh('ended', reps: 2, result: true)));
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 2'), findsOneWidget);
+      expect(owner.record!.exercises.single.result.outcome, 'target_reached');
+      expect(owner.record!.exercises.single.result.repetitions, 2);
+      expect(writes.length, 2);
+      expect(nativeStops, 0);
+      expect(actions, ['thigh_session_begin']);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'sample gap saves interrupted reps once while transport stays live',
     (tester) async {
       await openActiveExercise(tester);

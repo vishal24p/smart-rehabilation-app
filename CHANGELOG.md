@@ -16,7 +16,8 @@
 
 ### Fixed
 - Limit I2C clock-stretch waits in the supplied ESP8266 firmware to reduce multi-second streaming stalls when the MPU bus fails.
-- Start reference recording and exercises without inheriting sample gaps from before the new capture; actual gaps during exercise still freeze completed results safely.
+- Automatically recover reference recording and exercises after sample gaps up to one second, preserving completed repetitions and discarding partial movements; restart standing-zero countdowns without another tap.
+- Start reference recording and exercises without inheriting sample gaps from before the new capture; longer gaps still freeze completed results safely.
 - Correct left/right heel mapping and preserve compatibility with existing sensor headers.
 - Treat supplied dual-IMU failed-read zeros as unavailable motion data, preserving heel readings and preventing false repetitions.
 - Retain interrupted workout results when reconnect is requested during disconnect cleanup.

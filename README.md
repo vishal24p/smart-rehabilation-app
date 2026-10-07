@@ -43,8 +43,11 @@ from sit-to-stand, confirm chair contact, measure knee angle, or certify form.
 Inclination includes lateral tilt. Use consistent placement on the front thigh.
 Reference and exercise routes use ±2g/±250°/s, matching the supplied ESP8266 firmware.
 Each new capture starts its own sample clock. A gap before tapping Record or Start
-does not interrupt the new capture. Actual gaps during an exercise still interrupt
-counting and preserve completed repetitions; starting again requires a fresh zero.
+does not interrupt the new capture. Gaps up to one second discard the partial
+repetition and pause counting until you return upright and hold still, then resume
+automatically with completed repetitions preserved. During standing zero, these
+gaps restart the countdown automatically. Longer gaps or a disconnect interrupt
+the attempt and require a fresh zero.
 
 ## Phone setup
 

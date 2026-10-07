@@ -137,6 +137,42 @@ void main() {
   );
 
   testWidgets(
+    'short zeroing gap resets Register countdown without another begin',
+    (tester) async {
+      await showReference(tester);
+      await tap(tester, 'Re-record reference');
+      await snapshot(tester, 'zeroing', progress: .8);
+      await tester.pumpAndSettle();
+      expect(find.text('1'), findsOneWidget);
+      const reason =
+          'Readings paused; return upright and hold still to continue.';
+      await snapshot(tester, 'zeroing', reason: reason);
+      await tester.pumpAndSettle();
+      expect(find.text('3'), findsOneWidget);
+      expect(find.text(reason), findsOneWidget);
+      expect(find.text('Re-record reference'), findsNothing);
+      expect(connection.status, WearableStatus.live);
+      expect(records.single['reference_peak_deg'], 45);
+
+      await snapshot(tester, 'zeroing', progress: .4);
+      await tester.pumpAndSettle();
+      expect(find.text('2'), findsOneWidget);
+      expect(find.text(reason), findsNothing);
+      await snapshot(tester, 'recording', tilt: 0);
+      await tester.pumpAndSettle();
+      expect(find.text('Finish recording'), findsOneWidget);
+      expect(connection.thigh!.state, 'recording');
+      expect(connection.status, WearableStatus.live);
+      expect(records.single['reference_peak_deg'], 45);
+      expect(
+        commands.where((call) => call.method == 'sessionCommand').length,
+        1,
+      );
+      expect(commands.where((call) => call.method == 'disconnect'), isEmpty);
+    },
+  );
+
+  testWidgets(
     'hard sample gap keeps reference and live connection ready for fresh recording',
     (tester) async {
       await showReference(tester);
