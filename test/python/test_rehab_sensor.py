@@ -53,11 +53,11 @@ class SensorParserTest(unittest.TestCase):
     def test_named_dual_failed_thigh_cannot_complete_pending_return(self):
         rig = ThighRig()
         rig.begin(recording=False)
-        rig.ramp(60)
-        rig.feed(60)
+        rig.ramp(45)
+        rig.feed(45)
         rig.ramp(15)
         self.assertEqual(rig.processor.repetitions, 0)
-        self.assertGreaterEqual(rig.processor.cycle_peak, 60 - 1e-9)
+        self.assertLess(rig.processor.cycle_peak, 60)
         self.assertIsNotNone(rig.processor.departure)
         parser = SensorParser()
         parser.processor.thigh = rig.processor

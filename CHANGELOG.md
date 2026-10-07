@@ -16,10 +16,11 @@
 - Recover reference recording after short sample gaps and reject unstable zero captures.
 
 ### Fixed
+- Retain an already observed full-depth movement during sensor gaps shorter than ten seconds, then count it once when fresh readings confirm standing; retain observed reference bends across brief loss too.
 - Compare movement depth at the same one-decimal precision shown on screen; continue gyro-based thigh readings during acceleration-only saturation instead of interrupting the exercise.
 - Keep Android Wi-Fi approval requests open instead of cancelling after 20 seconds; stop repeated prompts after failure and reuse an already joined wearable network.
 - Limit I2C clock-stretch waits in the supplied ESP8266 firmware to reduce multi-second streaming stalls when the MPU bus fails.
-- Wait up to ten seconds for fresh thigh readings during registration and exercises, preserving completed repetitions and discarding partial movements; restart standing-zero countdowns without another tap.
+- Wait up to ten seconds for fresh thigh readings during registration and exercises, preserving completed repetitions and observed full depth while discarding unqualified partial movements; restart standing-zero countdowns without another tap.
 - Keep thigh readings visible during movement; remove movement holds, duration requirements and the fixed 30-degree registration minimum. Count sessions only after reaching the full saved depth and returning standing.
 - Retry interrupted standing zero on the same exercise page and expose disconnect controls during live registration.
 - Start reference recording and exercises without inheriting sample gaps from before the new capture; longer gaps still freeze completed results safely.

@@ -45,11 +45,13 @@ from sit-to-stand, confirm chair contact, measure knee angle, or certify form.
 Inclination includes lateral tilt. Use consistent placement on the front thigh.
 Reference and exercise routes use ±2g/±250°/s, matching the supplied ESP8266 firmware.
 Each new capture starts its own sample clock. A gap before tapping Record or Start
-does not interrupt the new capture. Gaps shorter than ten seconds discard the partial
-repetition. Fresh readings show the current angle immediately; return standing
-to start a new complete repetition. Completed repetitions are preserved. During standing zero, these
+does not interrupt the new capture. Gaps shorter than ten seconds retain a movement
+that already reached the saved depth; the next valid standing reading completes it
+once. Movements that had not reached the depth are discarded. Fresh readings show
+the current angle immediately. Completed repetitions are preserved. During standing zero, these
 gaps restart the countdown automatically. Missing thigh readings wait for fresh
-values for up to ten seconds, without counting movements during the loss.
+values for up to ten seconds, without counting movements during the loss. Reference
+recording retains an observed bend until fresh readings confirm the standing return.
 Ten seconds without fresh readings or a disconnect interrupts the attempt and
 requires a fresh zero. Completed repetitions remain saved. Readings stay visible
 during movement; no bend or return holds are required.
@@ -221,7 +223,8 @@ Timestamp restart clears graph history; Disconnect cancels retries/resources.
 Timestamp rollback, repeated headers, TCP retry or a device gap over 250 ms also
 invalidates two-IMU calibration. Thigh reference recording and exercises recover
 from gaps over 250 ms and shorter than ten seconds with fresh readings visible
-immediately; the interrupted movement is discarded and standing re-arms counting. Timestamp resets and
+immediately; observed full depth is retained until a valid standing return. Other
+partial movements are discarded and standing re-arms counting. Timestamp resets and
 gaps of ten seconds or more interrupt. Gyro clipping interrupts thigh analytics;
 acceleration-only clipping during continuous movement skips accelerometer correction
 and keeps the gyro estimate. A new zero requires unsaturated readings, and recovery

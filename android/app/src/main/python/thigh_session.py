@@ -193,6 +193,7 @@ class ThighProcessor:
             return self.interrupt(f'Thigh timestamp reset ({self.last_t} to {t} us); set session zero again.')
         if dt >= SENSOR_WAIT_S:
             return self.interrupt(f'Thigh readings unavailable for {dt:.1f} seconds; check the sensor and retry.')
+        keep_cycle = self.departure is not None and (self.recording or self._at_reference_depth())
         accel, gyro = sample.get('thigh_accel'), sample.get('thigh_gyro')
         if accel is None or gyro is None:
             # Keep the last fresh timestamp so repeated missing frames cannot extend the deadline.
@@ -201,21 +202,23 @@ class ThighProcessor:
             self.waiting_for_sensor = True
             self.capture = []
             self.tilt = None
-            self._clear_cycle()
+            if not keep_cycle:
+                self._clear_cycle()
+                self.cycle_armed = False
             if self.state == 'zeroing':
                 self.zero_progress = 0.0
-            self.cycle_armed = False
             return self._error('Thigh IMU readings unavailable. Waiting up to 10 seconds for fresh readings.')
         resumed = self.waiting_for_sensor or dt > MAX_GAP_S
         if resumed:
             # Retry the capture or movement without integrating missing time.
             self.capture = []
             self.tilt = None
-            self._clear_cycle()
+            if not keep_cycle:
+                self._clear_cycle()
+                self.cycle_armed = False
             if self.state == 'zeroing':
                 self.zero_progress = 0.0
                 self.reason = 'Stand still to continue.'
-            self.cycle_armed = False
         if (len(accel) != 3 or len(gyro) != 3
                 or any(type(value) not in (int, float) or not math.isfinite(value) for value in accel+gyro)):
             return self.interrupt('Invalid thigh IMU readings; set session zero again.')
