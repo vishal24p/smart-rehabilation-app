@@ -42,6 +42,7 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
   void _connectionChanged() {
     final state = widget.connection.analytics?.state;
     if (widget.connection.status != WearableStatus.live ||
+        !_motionPresent ||
         state == RehabState.interrupted ||
         state == RehabState.needsCalibration) {
       _configured = false;
@@ -56,12 +57,19 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
   }
 
   bool get _setupValid =>
+      _motionPresent &&
       widget.rangesConfirmed &&
       _mountingConfirmed &&
       _thighAxis != null &&
       _shinAxis != null &&
       _thighSign != null &&
       _shinSign != null;
+
+  bool get _dualHeel => widget.connection.latest?.fsrLeft != null;
+
+  bool get _motionPresent =>
+      widget.connection.latest?.thighAccel != null &&
+      widget.connection.latest?.shinAccel != null;
 
   Future<void> _configure() async {
     final request = ++_setupRequest;
@@ -115,6 +123,12 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
           const Text(
             'Knee bend and detected cycles are prototype estimates. Use only the instructed stand → sit → stand exercise; they are not a clinical assessment.',
           ),
+          if (connection.latest != null && !_motionPresent) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Knee metrics need readings from both thigh and shin IMUs. Heel comparison remains available.',
+            ),
+          ],
           const SizedBox(height: 16),
           Semantics(
             liveRegion: true,
@@ -161,28 +175,28 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
               'Thigh hinge axis',
               _thighAxis,
               const {0: 'X', 1: 'Y', 2: 'Z'},
-              enabled,
+              enabled && _motionPresent,
               (value) => _editSetup(() => _thighAxis = value),
             ),
             _selector(
               'Thigh axis direction',
               _thighSign,
               const {1: 'Positive (+)', -1: 'Negative (−)'},
-              enabled,
+              enabled && _motionPresent,
               (value) => _editSetup(() => _thighSign = value),
             ),
             _selector(
               'Shin hinge axis',
               _shinAxis,
               const {0: 'X', 1: 'Y', 2: 'Z'},
-              enabled,
+              enabled && _motionPresent,
               (value) => _editSetup(() => _shinAxis = value),
             ),
             _selector(
               'Shin axis direction',
               _shinSign,
               const {1: 'Positive (+)', -1: 'Negative (−)'},
-              enabled,
+              enabled && _motionPresent,
               (value) => _editSetup(() => _shinSign = value),
             ),
             CheckboxListTile(
@@ -193,7 +207,7 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
                 'Both selected axes are parallel to the knee hinge and point to the same physical side. Check each board’s markings; matching letters alone do not prove alignment.',
               ),
               value: _mountingConfirmed,
-              onChanged: enabled
+              onChanged: enabled && _motionPresent
                   ? (value) => setState(() {
                       _mountingConfirmed = value ?? false;
                       _configured = false;
@@ -209,17 +223,19 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
             ),
             const SizedBox(height: 8),
             _action(
-              'Capture unloaded heel',
+              _dualHeel ? 'Capture unloaded heels' : 'Capture unloaded heel',
               'heel_unloaded',
-              enabled && _configured,
+              enabled,
             ),
             _action(
-              'Capture loaded heel',
+              _dualHeel ? 'Capture loaded heels' : 'Capture loaded heel',
               'heel_loaded',
-              enabled && _configured,
+              enabled,
             ),
-            const Text(
-              'Capture unloaded first, then loaded, for two stable seconds each. Heel contact can remain unavailable while motion calibration continues.',
+            Text(
+              _dualHeel
+                  ? 'Keep both heel sensors unloaded for the first capture, then load both steadily for the second. Capture two stable seconds each; no body weight is needed.'
+                  : 'Capture unloaded first, then loaded, for two stable seconds each. Heel contact can remain unavailable while motion calibration continues.',
             ),
             const SizedBox(height: 8),
             _action(
@@ -263,14 +279,30 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
             'Detected sit-to-stand cycles',
             analytics?.cycles?.toString(),
           ),
-          _metric('Heel sensor contact', switch (analytics?.heelContact) {
-            true => 'Pressed',
-            false => 'Not pressed',
-            _ => null,
-          }),
+          _metric(
+            _dualHeel ? 'Right heel sensor contact' : 'Heel sensor contact',
+            switch (analytics?.heelContact) {
+              true => 'Pressed',
+              false => 'Not pressed',
+              _ => null,
+            },
+          ),
+          if (_dualHeel)
+            _metric(
+              'Left heel sensor contact',
+              switch (analytics?.leftHeelContact) {
+                true => 'Pressed',
+                false => 'Not pressed',
+                _ => null,
+              },
+            ),
           if (analytics?.heelSaturated ?? false)
             const Text(
               'Heel ADC is saturated; changing load magnitude is unavailable.',
+            ),
+          if (analytics?.leftHeelSaturated ?? false)
+            const Text(
+              'Left heel ADC is saturated; comparison is unavailable.',
             ),
           _metric('Session ROM', _number(analytics?.romDeg, '°')),
           _metric('Last cycle duration', _number(analytics?.lastCycleS, ' s')),
@@ -357,9 +389,15 @@ class _RehabSessionPanelState extends State<RehabSessionPanel> {
   String _instructions(RehabState state) => switch (state) {
     RehabState.setup =>
       'Verify setup, capture the heel baselines, then prepare your comfortable upright standing reference.',
+    RehabState.heelZero => 'Keep both heel sensors free of pressure.',
     RehabState.heelUnloaded =>
-      'Keep the heel sensor unloaded and still for two seconds.',
-    RehabState.heelLoaded => 'Press the heel sensor steadily for two seconds.',
+      _dualHeel
+          ? 'Keep both heel sensors unloaded and still for two seconds.'
+          : 'Keep the heel sensor unloaded and still for two seconds.',
+    RehabState.heelLoaded =>
+      _dualHeel
+          ? 'Load both heel sensors steadily for two seconds.'
+          : 'Press the heel sensor steadily for two seconds.',
     RehabState.standing =>
       'Hold your comfortable upright standing pose still for three consecutive seconds. Movement restarts this window.',
     RehabState.movementReady =>

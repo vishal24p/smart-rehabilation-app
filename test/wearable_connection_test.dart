@@ -21,7 +21,7 @@ Map<String, Object> sample({int time = 1, bool restart = false}) => {
   'scaled': false,
 };
 
-Future<void> emit(Map<String, Object> data) async {
+Future<void> emit(Map<String, Object?> data) async {
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .handlePlatformMessage(
         events.name,
@@ -83,6 +83,235 @@ void main() {
       null,
     );
   });
+
+  test('zero capture payload is validated and retained in analytics', () {
+    final zero = {
+      'version': 1,
+      'adc_max': 1023,
+      'left': {'baseline': 12.0, 'deadband': 5.0},
+      'right': {'baseline': 11.0, 'deadband': 5.0},
+    };
+    final snapshot = analytics(state: 'heel_zero')..['heel_zero'] = zero;
+    expect(RehabAnalytics.fromJson(snapshot).heelZero, zero);
+    snapshot['heel_zero'] = 'bad';
+    expect(() => RehabAnalytics.fromJson(snapshot), throwsFormatException);
+    snapshot['heel_zero'] = {...zero, 'version': 2};
+    expect(() => RehabAnalytics.fromJson(snapshot), throwsFormatException);
+  });
+
+  test(
+    'legacy and dual heel samples retain independent readings and history',
+    () async {
+      await connection.connect();
+      await emit(sample());
+      expect(connection.latest!.fsr, 1200);
+      expect(connection.latest!.fsrLeft, isNull);
+      expect(connection.history.single.leftAdc, isNull);
+      await emit(sample(time: 2)..['fsr_left'] = 750);
+      expect(connection.latest!.fsr, 1200);
+      expect(connection.latest!.fsrLeft, 750);
+      expect(connection.history.last.adc, 1200);
+      expect(connection.history.last.leftAdc, 750);
+    },
+  );
+
+  test(
+    'explicit missing IMUs stay unavailable without invented zero vectors',
+    () {
+      final thighOnly = SensorSample.fromJson(<String, dynamic>{
+        ...sample(),
+        'shin_accel': null,
+        'shin_gyro': null,
+      });
+      expect(thighOnly.thighAccel, [1, 2, 3]);
+      expect(thighOnly.thighGyro, [4, 5, 6]);
+      expect(thighOnly.shinAccel, isNull);
+      expect(thighOnly.shinGyro, isNull);
+      final shinOnly = SensorSample.fromJson(<String, dynamic>{
+        ...sample(),
+        'thigh_accel': null,
+        'thigh_gyro': null,
+      });
+      expect(shinOnly.thighAccel, isNull);
+      expect(shinOnly.thighGyro, isNull);
+      expect(shinOnly.shinAccel, [7, 8, 9]);
+      expect(shinOnly.shinGyro, [10, 11, 12]);
+      final heelsOnly = SensorSample.fromJson(<String, dynamic>{
+        ...sample(),
+        'thigh_accel': null,
+        'thigh_gyro': null,
+        'shin_accel': null,
+        'shin_gyro': null,
+        'fsr_left': 750,
+      });
+      expect(heelsOnly.thighAccel, isNull);
+      expect(heelsOnly.shinAccel, isNull);
+      expect(heelsOnly.fsr, 1200);
+      expect(heelsOnly.fsrLeft, 750);
+      final zero = SensorSample.fromJson(
+        sample()
+          ..['shin_accel'] = [0, 0, 0]
+          ..['shin_gyro'] = [0, 0, 0],
+      );
+      expect(zero.shinAccel, [0, 0, 0]);
+      expect(zero.shinGyro, [0, 0, 0]);
+    },
+  );
+
+  test(
+    'motion vectors require present keys, paired nulls and valid values',
+    () {
+      for (final key in [
+        'thigh_accel',
+        'thigh_gyro',
+        'shin_accel',
+        'shin_gyro',
+      ]) {
+        expect(
+          () => SensorSample.fromJson(sample()..remove(key)),
+          throwsFormatException,
+        );
+        expect(
+          () =>
+              SensorSample.fromJson(<String, dynamic>{...sample(), key: null}),
+          throwsFormatException,
+        );
+        for (final value in <Object>[
+          [1, 2],
+          [1, 2, double.infinity],
+          [1, 2, '3'],
+          [1, 2, 32768],
+          [1, 2, -32769],
+          [1, 2, 3.5],
+          false,
+        ]) {
+          expect(
+            () => SensorSample.fromJson(sample()..[key] = value),
+            throwsFormatException,
+            reason: key,
+          );
+        }
+      }
+      final scaled = SensorSample.fromJson(
+        sample()
+          ..['scaled'] = true
+          ..['thigh_accel'] = [0.5, 1.5, 2.5],
+      );
+      expect(scaled.thighAccel, [0.5, 1.5, 2.5]);
+    },
+  );
+
+  test('samples reject invalid left ADC readings', () {
+    for (final value in <Object>[-1, 4096, 1.5, '750', true]) {
+      expect(
+        () => SensorSample.fromJson(sample()..['fsr_left'] = value),
+        throwsFormatException,
+      );
+    }
+    for (final value in [0, 4095]) {
+      expect(
+        SensorSample.fromJson(sample()..['fsr_left'] = value).fsrLeft,
+        value,
+      );
+    }
+  });
+
+  test('dual heel analytics accepts optional unavailable shares', () {
+    final legacy = RehabAnalytics.fromJson(analytics());
+    expect(legacy.leftHeelContact, isNull);
+    expect(legacy.leftHeelSaturated, isFalse);
+    expect(legacy.heelShareRight, isNull);
+    expect(legacy.heelShareLeft, isNull);
+    expect(legacy.heelShareReason, isNull);
+    final dual = RehabAnalytics.fromJson(
+      analytics()
+        ..['left_heel_contact'] = true
+        ..['left_heel_saturated'] = false
+        ..['heel_share_right'] = 60
+        ..['heel_share_left'] = 40.0,
+    );
+    expect(dual.leftHeelContact, isTrue);
+    expect(dual.heelShareRight, 60);
+    expect(dual.heelShareLeft, 40);
+    final unavailable = RehabAnalytics.fromJson(
+      analytics()
+        ..['left_heel_contact'] = null
+        ..['heel_share_right'] = null
+        ..['heel_share_left'] = null,
+    );
+    expect(unavailable.leftHeelContact, isNull);
+    expect(unavailable.heelShareRight, isNull);
+    expect(unavailable.heelShareLeft, isNull);
+    final noLoad = RehabAnalytics.fromJson(
+      analytics()..['heel_share_reason'] = 'No heel load detected.',
+    );
+    expect(noLoad.heelShareReason, 'No heel load detected.');
+    for (final shares in [
+      {'heel_share_right': 50},
+      {'heel_share_left': 50},
+      {'heel_share_right': 60, 'heel_share_left': 60},
+    ]) {
+      expect(
+        () => RehabAnalytics.fromJson(analytics()..addAll(shares)),
+        throwsFormatException,
+      );
+    }
+    for (final key in ['heel_share_right', 'heel_share_left']) {
+      for (final value in <Object>[
+        -1,
+        101,
+        double.nan,
+        double.infinity,
+        '50',
+      ]) {
+        expect(
+          () => RehabAnalytics.fromJson(analytics()..[key] = value),
+          throwsFormatException,
+          reason: key,
+        );
+      }
+    }
+    for (final entry in <String, Object?>{
+      'left_heel_contact': 1,
+      'left_heel_saturated': null,
+      'heel_share_reason': 1,
+    }.entries) {
+      expect(
+        () => RehabAnalytics.fromJson(analytics()..[entry.key] = entry.value),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test(
+    'connection preserves dual analytics and clears them when unavailable',
+    () async {
+      await connection.connect();
+      await emit(
+        sample()
+          ..['analytics'] = (analytics()
+            ..['left_heel_contact'] = true
+            ..['left_heel_saturated'] = true
+            ..['heel_share_right'] = 60
+            ..['heel_share_left'] = 40),
+      );
+      expect(connection.analytics!.leftHeelContact, isTrue);
+      expect(connection.analytics!.leftHeelSaturated, isTrue);
+      expect(connection.analytics!.heelShareRight, 60);
+      expect(connection.analytics!.heelShareLeft, 40);
+      await emit({
+        'type': 'analytics',
+        'analytics': analytics()
+          ..['heel_share_reason'] = 'No heel load detected.',
+      });
+      expect(connection.analytics!.heelShareReason, 'No heel load detected.');
+      await connection.disconnect();
+      expect(connection.analytics!.leftHeelContact, isNull);
+      expect(connection.analytics!.heelShareRight, isNull);
+      expect(connection.analytics!.heelShareLeft, isNull);
+      expect(connection.analytics!.heelShareReason, isNull);
+    },
+  );
 
   test('analytics validates nullable metrics and immutable summary', () {
     expect(
@@ -249,33 +478,41 @@ void main() {
   });
 
   test(
-    'old command and disconnect results cannot overwrite reconnected session',
+    'disconnect coalesces and blocks reconnect until frozen summary is accepted',
     () async {
       final commandGate = Completer<Object?>();
       final stopGate = Completer<Object?>();
+      var connects = 0, disconnects = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(commands, (call) async {
             if (call.method == 'sessionCommand') return commandGate.future;
-            if (call.method == 'disconnect') return stopGate.future;
+            if (call.method == 'connect') connects++;
+            if (call.method == 'disconnect') {
+              disconnects++;
+              return stopGate.future;
+            }
             return null;
           });
       await connection.connect();
       await emit(sample());
       final command = connection.sendSessionCommand('standing');
       final stopped = connection.disconnect();
+      final repeatedStop = connection.disconnect();
       await connection.connect();
-      await emit(
-        sample(time: 10)..['analytics'] = analytics(state: 'active', cycles: 0),
-      );
+      expect(connects, 1);
+      expect(disconnects, 1);
+      expect(connection.commandPending, isTrue);
       commandGate.completeError(PlatformException(code: 'old_failure'));
       stopGate.complete(
         jsonEncode(analytics(state: 'interrupted')..['summary'] = summary()),
       );
-      await Future.wait([command, stopped]);
-      expect(connection.status, WearableStatus.live);
+      await Future.wait([command, stopped, repeatedStop]);
+      expect(connection.status, WearableStatus.disconnected);
       expect(connection.commandError, isNull);
-      expect(connection.analytics!.cycles, 0);
-      expect(connection.analytics!.summary, isNull);
+      expect(connection.analytics!.summary!.cycles, 2);
+      expect(connection.commandPending, isFalse);
+      await connection.connect();
+      expect(connects, 2);
       await emit(
         sample(time: 11)..['analytics'] = analytics(state: 'active', cycles: 1),
       );
@@ -361,7 +598,7 @@ void main() {
     expect(connection.latest!.fsr, 1200);
   });
 
-  test('delayed disconnect cleanup cannot stop a newer connection', () async {
+  test('reconnect waits until delayed event cancellation finishes', () async {
     final gate = Completer<Object?>();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -373,10 +610,12 @@ void main() {
         );
     await connection.connect();
     final stopped = connection.disconnect();
-    final reconnected = connection.connect();
+    await connection.connect();
+    expect(connection.commandPending, isTrue);
+    expect(calls.where((call) => call == 'connect').length, 1);
     gate.complete(null);
-    await reconnected;
     await stopped;
+    await connection.connect();
     expect(calls.last, 'connect');
     expect(connection.status, WearableStatus.connecting);
   });

@@ -7,6 +7,8 @@ plugins {
 }
 
 android {
+    useLibrary("android.test.runner", false)
+    useLibrary("android.test.base", false)
     namespace = "com.example.rehab_monitor"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -25,6 +27,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
         ndk {
             abiFilters.clear()
             abiFilters += listOf("arm64-v8a", "x86_64")

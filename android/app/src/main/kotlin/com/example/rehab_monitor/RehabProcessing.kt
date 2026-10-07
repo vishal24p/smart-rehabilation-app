@@ -137,8 +137,9 @@ class RehabProcessing(
     catch (error: ExecutionException) { throw (error.cause ?: error) }
 
     companion object {
-        private val actions = setOf("configure", "heel_unloaded", "heel_loaded", "standing", "movement",
-            "finish_movement", "start", "end", "retry")
+        private val actions = setOf("configure", "heel_unloaded", "heel_loaded", "heel_zero", "standing", "movement",
+            "finish_movement", "start", "end", "retry", "thigh_reference_begin", "thigh_reference_finish",
+            "thigh_session_begin", "thigh_session_end", "thigh_cancel")
 
         fun validateCommand(arguments: Any?): Pair<String, Map<*, *>?> {
             require(arguments is Map<*, *>) { "Session command must contain an action." }
@@ -146,6 +147,20 @@ class RehabProcessing(
             require(action is String && action in actions) { "Choose a supported session action." }
             val config = arguments["config"]
             require(config == null || config is Map<*, *>) { "Session config must be a map." }
+            if (action == "heel_zero") require(config == null) { "Heel baseline capture takes no config." }
+            if (action in setOf("thigh_reference_begin", "thigh_session_begin")) {
+                require(config is Map<*, *> && config["exercise_id"] in setOf("squat", "sit_to_stand")) {
+                    "Choose Squat or Sit-to-stand."
+                }
+                if (action == "thigh_session_begin") {
+                    val reference = ExerciseReferencePayload.validate(config["reference"])
+                    require(reference["exercise_id"] == config["exercise_id"]) { "Reference must match the exercise." }
+                    if (config.containsKey("rep_target")) {
+                        val target = config["rep_target"]
+                        require(target is Int && target in 1..1000) { "Choose a whole-number rep target from 1 to 1000." }
+                    }
+                }
+            }
             if (action == "configure") {
                 require(config is Map<*, *>) { "Confirm ranges and signed board axes." }
                 require(config["ranges_confirmed"] is Boolean && config["mounting_confirmed"] is Boolean) {

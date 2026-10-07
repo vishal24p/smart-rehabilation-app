@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'exercise_reference.dart';
+import 'app_settings.dart';
 
 enum WearableStatus {
   idle,
@@ -17,6 +19,7 @@ enum WearableStatus {
 
 enum RehabState {
   setup('setup'),
+  heelZero('heel_zero'),
   heelUnloaded('heel_unloaded'),
   heelLoaded('heel_loaded'),
   standing('standing'),
@@ -40,6 +43,13 @@ double? _metric(Map<String, dynamic> json, String key, {bool signed = false}) {
     throw FormatException('Invalid $key');
   }
   return value.toDouble();
+}
+
+double? _share(Map<String, dynamic> json, String key) {
+  if (json[key] == null) return null;
+  final value = _metric(json, key);
+  if (value! > 100) throw FormatException('Invalid $key');
+  return value;
 }
 
 int? _cycles(Map<String, dynamic> json) {
@@ -100,7 +110,14 @@ class RehabAnalytics {
     this.lastCycleS,
     this.heelContact,
     this.heelSaturated = false,
+    this.leftHeelContact,
+    this.leftHeelSaturated = false,
+    this.heelShareRight,
+    this.heelShareLeft,
+    this.heelShareReason,
+    this.heelZero,
     this.summary,
+    this.thigh,
   });
   final RehabState state;
   final String? reason;
@@ -109,7 +126,13 @@ class RehabAnalytics {
   final int? cycles;
   final bool? heelContact;
   final bool heelSaturated;
+  final bool? leftHeelContact;
+  final bool leftHeelSaturated;
+  final double? heelShareRight, heelShareLeft;
+  final String? heelShareReason;
+  final Map<String, dynamic>? heelZero;
   final RehabSummary? summary;
+  final ThighAnalytics? thigh;
 
   factory RehabAnalytics.fromJson(Map<String, dynamic> json) {
     final state = RehabState.values
@@ -117,7 +140,13 @@ class RehabAnalytics {
         .firstOrNull;
     final progress = _metric(json, 'progress');
     final contact = json['heel_contact'];
+    final leftContact = json['left_heel_contact'];
+    final leftSaturated = json['left_heel_saturated'];
+    final shareReason = json['heel_share_reason'];
+    final shareRight = _share(json, 'heel_share_right');
+    final shareLeft = _share(json, 'heel_share_left');
     final summary = json['summary'];
+    final thigh = json['thigh'];
     if (state == null ||
         !json.containsKey('reason') ||
         (json['reason'] != null && json['reason'] is! String) ||
@@ -126,8 +155,16 @@ class RehabAnalytics {
         !json.containsKey('heel_contact') ||
         (contact != null && contact is! bool) ||
         json['heel_saturated'] is! bool ||
+        (leftContact != null && leftContact is! bool) ||
+        (json.containsKey('left_heel_saturated') && leftSaturated is! bool) ||
+        (shareReason != null && shareReason is! String) ||
+        ((shareRight == null) != (shareLeft == null)) ||
+        (shareRight != null && (shareRight + shareLeft! - 100).abs() > 0.01) ||
         !json.containsKey('summary') ||
-        (summary != null && summary is! Map<String, dynamic>)) {
+        (summary != null && summary is! Map<String, dynamic>) ||
+        (thigh != null && thigh is! Map<String, dynamic>) ||
+        (json['heel_zero'] != null &&
+            json['heel_zero'] is! Map<String, dynamic>)) {
       throw const FormatException('Invalid rehab analytics');
     }
     return RehabAnalytics._(
@@ -140,9 +177,22 @@ class RehabAnalytics {
       lastCycleS: _metric(json, 'last_cycle_s'),
       heelContact: contact as bool?,
       heelSaturated: json['heel_saturated'] as bool,
+      leftHeelContact: leftContact as bool?,
+      leftHeelSaturated: leftSaturated as bool? ?? false,
+      heelShareRight: shareRight,
+      heelShareLeft: shareLeft,
+      heelShareReason: shareReason as String?,
+      heelZero: json['heel_zero'] == null
+          ? null
+          : validateHeelZero(
+              Map<String, dynamic>.from(json['heel_zero'] as Map),
+            ),
       summary: summary == null
           ? null
           : RehabSummary.fromJson(summary as Map<String, dynamic>),
+      thigh: thigh == null
+          ? null
+          : ThighAnalytics.fromJson(thigh as Map<String, dynamic>),
     );
   }
 
@@ -156,7 +206,14 @@ class RehabAnalytics {
     lastCycleS: lastCycleS,
     heelContact: heelContact,
     heelSaturated: heelSaturated,
+    leftHeelContact: leftHeelContact,
+    leftHeelSaturated: leftHeelSaturated,
+    heelShareRight: heelShareRight,
+    heelShareLeft: heelShareLeft,
+    heelShareReason: heelShareReason,
+    heelZero: heelZero,
     summary: value,
+    thigh: thigh,
   );
 
   RehabAnalytics _unavailable(String reason) => RehabAnalytics._(
@@ -164,6 +221,7 @@ class RehabAnalytics {
     reason: reason,
     progress: 0,
     summary: summary,
+    thigh: thigh?.unavailable(reason),
   );
 }
 
@@ -176,16 +234,19 @@ class SensorSample {
     required this.shinAccel,
     required this.shinGyro,
     required this.fsr,
+    this.fsrLeft,
     required this.scaled,
   });
 
   final int timeUs, fsr;
+  final int? fsrLeft;
   final bool restart, scaled;
-  final List<double> thighAccel, thighGyro, shinAccel, shinGyro;
+  final List<double>? thighAccel, thighGyro, shinAccel, shinGyro;
 
   factory SensorSample.fromJson(Map<String, dynamic> json) {
     final time = json['time_us'];
     final fsr = json['fsr'];
+    final fsrLeft = json['fsr_left'];
     final scaled = json['scaled'];
     if (time is! int ||
         time < 0 ||
@@ -193,12 +254,16 @@ class SensorSample {
         fsr is! int ||
         fsr < 0 ||
         fsr > 4095 ||
+        (fsrLeft != null &&
+            (fsrLeft is! int || fsrLeft < 0 || fsrLeft > 4095)) ||
         scaled is! bool ||
         json['restart'] is! bool) {
       throw const FormatException('Invalid sensor sample');
     }
-    List<double> vector(String key) {
+    List<double>? vector(String key) {
+      if (!json.containsKey(key)) throw FormatException('Missing $key');
       final values = json[key];
+      if (values == null) return null;
       if (values is! List ||
           values.length != 3 ||
           values.any(
@@ -214,23 +279,33 @@ class SensorSample {
       );
     }
 
+    final thighAccel = vector('thigh_accel');
+    final thighGyro = vector('thigh_gyro');
+    final shinAccel = vector('shin_accel');
+    final shinGyro = vector('shin_gyro');
+    if ((thighAccel == null) != (thighGyro == null) ||
+        (shinAccel == null) != (shinGyro == null)) {
+      throw const FormatException('Incomplete motion readings');
+    }
     return SensorSample(
       timeUs: time,
       restart: json['restart'] as bool,
-      thighAccel: vector('thigh_accel'),
-      thighGyro: vector('thigh_gyro'),
-      shinAccel: vector('shin_accel'),
-      shinGyro: vector('shin_gyro'),
+      thighAccel: thighAccel,
+      thighGyro: thighGyro,
+      shinAccel: shinAccel,
+      shinGyro: shinGyro,
       fsr: fsr,
+      fsrLeft: fsrLeft as int?,
       scaled: scaled,
     );
   }
 }
 
 class HeelPoint {
-  const HeelPoint(this.receivedAt, this.adc);
+  const HeelPoint(this.receivedAt, this.adc, {this.leftAdc});
   final Duration receivedAt;
   final int adc;
+  final int? leftAdc;
 }
 
 class WearableConnection extends ChangeNotifier {
@@ -251,6 +326,7 @@ class WearableConnection extends ChangeNotifier {
   final bool _android;
   late final Duration Function() _clock;
   StreamSubscription<dynamic>? _subscription;
+  Future<void>? _disconnecting;
   var _generation = 0;
   var _disposed = false;
   var _status = WearableStatus.idle;
@@ -265,7 +341,8 @@ class WearableConnection extends ChangeNotifier {
   String get message => _message;
   SensorSample? get latest => _latest;
   RehabAnalytics? get analytics => _analytics;
-  bool get commandPending => _commandPending;
+  ThighAnalytics? get thigh => _analytics?.thigh;
+  bool get commandPending => _commandPending || _disconnecting != null;
   String? get commandError => _commandError;
   List<HeelPoint> get history => List.unmodifiable(_history);
   bool get active => switch (_status) {
@@ -277,7 +354,7 @@ class WearableConnection extends ChangeNotifier {
   };
 
   Future<void> connect({bool scaleConfirmed = false}) async {
-    if (_disposed || active) return;
+    if (_disposed || active || _disconnecting != null) return;
     if (!_android) {
       _setStatus(
         WearableStatus.unsupported,
@@ -359,7 +436,7 @@ class WearableConnection extends ChangeNotifier {
         _history.removeWhere(
           (point) => now - point.receivedAt > const Duration(seconds: 10),
         );
-        _history.add(HeelPoint(now, sample.fsr));
+        _history.add(HeelPoint(now, sample.fsr, leftAdc: sample.fsrLeft));
         if (_history.length > 100) {
           _history.removeRange(0, _history.length - 100);
         }
@@ -391,7 +468,7 @@ class WearableConnection extends ChangeNotifier {
     String action, {
     Map<String, dynamic>? config,
   }) async {
-    if (_disposed || _commandPending) return;
+    if (_disposed || commandPending) return;
     if (_status != WearableStatus.live) {
       _commandError = 'Connect and wait for live readings before calibration.';
       notifyListeners();
@@ -402,10 +479,13 @@ class WearableConnection extends ChangeNotifier {
     _commandError = null;
     notifyListeners();
     try {
-      await commands.invokeMethod<void>('sessionCommand', {
+      final response = await commands.invokeMethod<dynamic>('sessionCommand', {
         'action': action,
         'config': ?config,
       });
+      if (!_disposed && generation == _generation && response is String) {
+        _acceptAnalytics(_decodeAnalytics(jsonDecode(response)));
+      }
       if (!_disposed &&
           generation == _generation &&
           action == 'start' &&
@@ -451,7 +531,17 @@ class WearableConnection extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> disconnect() async {
+  Future<void> disconnect() {
+    if (_disposed) return Future.value();
+    return _disconnecting ??= Future<void>.microtask(_disconnect).whenComplete(
+      () {
+        _disconnecting = null;
+        if (!_disposed) notifyListeners();
+      },
+    );
+  }
+
+  Future<void> _disconnect() async {
     if (_disposed) return;
     final generation = ++_generation;
     _commandPending = false;

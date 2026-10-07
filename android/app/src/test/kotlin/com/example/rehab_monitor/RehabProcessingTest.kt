@@ -189,6 +189,38 @@ class RehabProcessingTest {
         }
     }
 
+    @Test fun thigh_rep_targets_are_optional_and_require_whole_numbers() {
+        val reference = mapOf("exercise_id" to "squat", "measurement_version" to "thigh_tilt_v1",
+            "reference_peak_deg" to 60.0, "bend_threshold_deg" to 36.0, "upright_band_deg" to 9.0,
+            "placement" to "front_thigh", "recorded_at" to "2026-10-06T00:00:00Z")
+        val config = mapOf("exercise_id" to "squat", "reference" to reference)
+        fun command(target: Any?) = mapOf("action" to "thigh_session_begin", "config" to config + ("rep_target" to target))
+        assertEquals("thigh_session_begin", RehabProcessing.validateCommand(mapOf("action" to "thigh_session_begin", "config" to config)).first)
+        for (target in listOf(1, 1000)) assertEquals("thigh_session_begin", RehabProcessing.validateCommand(command(target)).first)
+        for (target in listOf(null, 0, 1001, true, 1.0, "2")) {
+            assertThrows(IllegalArgumentException::class.java) { RehabProcessing.validateCommand(command(target)) }
+        }
+    }
+
+    @Test fun settings_validate_baselines_and_reject_invalid_replacements() {
+        val zero = mapOf("version" to 1, "adc_max" to 1023,
+            "left" to mapOf("baseline" to 12.0, "deadband" to 5.0),
+            "right" to mapOf("baseline" to 11.0, "deadband" to 6.0))
+        assertEquals("right", AppSettingsPayload.validate(mapOf("injured_leg" to "right", "heel_zero" to zero))["injured_leg"])
+        assertNull(AppSettingsPayload.validate(mapOf("injured_leg" to null, "heel_zero" to null))["heel_zero"])
+        assertEquals("heel_zero", RehabProcessing.validateCommand(mapOf("action" to "heel_zero")).first)
+        assertThrows(IllegalArgumentException::class.java) {
+            RehabProcessing.validateCommand(mapOf("action" to "heel_zero", "config" to emptyMap<String, Any>()))
+        }
+        for (bad in listOf(zero + ("adc_max" to 4095), zero + ("version" to 1.0),
+            zero + ("left" to mapOf("baseline" to Double.NaN, "deadband" to 5)),
+            zero + ("right" to mapOf("baseline" to 1023, "deadband" to 5)),
+            zero + ("right" to mapOf("baseline" to 12, "deadband" to 0)), zero + ("unknown" to 1))) {
+            assertThrows(IllegalArgumentException::class.java) { AppSettingsPayload.validateHeelZero(bad) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { AppSettingsPayload.validate(mapOf("injured_leg" to "other", "heel_zero" to zero)) }
+    }
+
     @Test fun stale_retry_callback_cannot_interrupt_replacement_session() {
         val fake = FakeProcessor()
         val queue = RehabProcessing({ fake })
