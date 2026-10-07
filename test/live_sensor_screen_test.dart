@@ -11,6 +11,8 @@ Future<void> expandDisclosure(WidgetTester tester, String label) async {
   await tester.drag(find.byType(ListView), const Offset(0, 3000));
   await tester.pumpAndSettle();
   await tester.scrollUntilVisible(find.text(label), 150, maxScrolls: 80);
+  await tester.ensureVisible(find.text(label));
+  await tester.pumpAndSettle();
   await tester.tap(find.text(label));
   await tester.pumpAndSettle();
 }

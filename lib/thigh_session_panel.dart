@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'exercise_reference.dart';
+import 'exercise_reference_screen.dart';
 import 'wearable_connection.dart';
+import 'workout_session.dart';
 
 class SessionZeroCountdown extends StatelessWidget {
   const SessionZeroCountdown({required this.progress, super.key});
@@ -42,11 +44,13 @@ class ThighSessionPanel extends StatefulWidget {
     required this.connection,
     required this.exerciseId,
     this.store,
+    this.workout,
     super.key,
   });
   final WearableConnection connection;
   final String exerciseId;
   final ExerciseReferenceStore? store;
+  final WorkoutSessionController? workout;
 
   @override
   State<ThighSessionPanel> createState() => _ThighSessionPanelState();
@@ -57,12 +61,38 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
   ExerciseReference? _reference;
   String? _error;
   bool _loading = true;
+  bool _began = false, _starting = false;
+  bool _settingReference = false;
 
   @override
   void initState() {
     super.initState();
     _store = widget.store ?? ExerciseReferenceStore();
     _load();
+  }
+
+  Future<void> _begin() async {
+    setState(() => _starting = true);
+    final workout = widget.workout;
+    bool accepted;
+    if (workout != null) {
+      accepted = await workout.beginExercise(widget.exerciseId, _reference!);
+    } else {
+      await widget.connection.sendSessionCommand(
+        'thigh_session_begin',
+        config: {
+          'exercise_id': widget.exerciseId,
+          'reference': _reference!.toJson(),
+        },
+      );
+      accepted = widget.connection.commandError == null;
+    }
+    if (mounted) {
+      setState(() {
+        _began = accepted;
+        _starting = false;
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -88,24 +118,75 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
     }
   }
 
+  Future<void> _setReference() async {
+    setState(() => _settingReference = true);
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ExerciseReferenceScreen(
+          exerciseId: widget.exerciseId,
+          connection: widget.connection,
+          store: _store,
+          disconnectOnDispose: false,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    final state = widget.connection.thigh?.state;
+    if ({'zeroing', 'recording', 'reference_ready'}.contains(state)) {
+      await widget.connection.sendSessionCommand('thigh_cancel');
+    }
+    if (!mounted) return;
+    setState(() => _settingReference = false);
+    await _load();
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: widget.connection,
+    animation: Listenable.merge([
+      widget.connection,
+      if (widget.workout != null) widget.workout!,
+    ]),
     builder: (context, _) {
       final connection = widget.connection;
+      final workout = widget.workout;
+      final managed = workout != null;
       final snapshot = connection.thigh;
-      final current = snapshot?.exerciseId == widget.exerciseId
+      final current =
+          !_settingReference &&
+              snapshot?.exerciseId == widget.exerciseId &&
+              (!managed ||
+                  _began ||
+                  (_starting &&
+                      {'zeroing', 'active'}.contains(snapshot?.state)))
           ? snapshot
           : null;
       final state = current?.state;
-      final pending = connection.commandPending;
+      final pending =
+          connection.commandPending || _starting || (workout?.busy ?? false);
       final live = connection.status == WearableStatus.live;
       final hasThigh = connection.latest?.thighAccel != null;
       final running = state == 'zeroing' || state == 'active';
+      final result = current?.result;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text('Thigh movement · not knee angle'),
+          const SizedBox(height: 16),
+          Semantics(
+            label:
+                'Completed repetitions: ${current?.repetitions ?? 0}${managed ? ' of ${workout.targets[widget.exerciseId]}' : ''}',
+            excludeSemantics: true,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Repetitions'),
+                Text(
+                  '${current?.repetitions ?? 0}${managed ? ' / ${workout.targets[widget.exerciseId]}' : ''}',
+                  style: Theme.of(context).textTheme.displaySmall,
+                ),
+              ],
+            ),
+          ),
           if (_loading)
             const Padding(
               padding: EdgeInsets.all(16),
@@ -119,7 +200,14 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
             ),
           ] else if (!_loading && _reference == null) ...[
             const SizedBox(height: 12),
-            const Text('Set a reference in the Register tab.'),
+            const Text(
+              'Counting has not started. Set a movement reference first.',
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonal(
+              onPressed: pending || _settingReference ? null : _setReference,
+              child: const Text('Set movement reference'),
+            ),
           ] else if (_reference != null) ...[
             const SizedBox(height: 12),
             _metric('Saved range', _degrees(_reference!.peakDeg)),
@@ -135,30 +223,43 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
             if (current?.reason != null)
               Semantics(liveRegion: true, child: Text(current!.reason!)),
             if (connection.commandError != null) Text(connection.commandError!),
+            if (workout?.error != null) ...[
+              Semantics(liveRegion: true, child: Text(workout!.error!)),
+              if (workout.needsRetry)
+                TextButton(
+                  onPressed: () => workout.retry(),
+                  child: const Text('Retry saving'),
+                ),
+            ],
             if (live && !hasThigh)
               const Text('Thigh readings unavailable. Check the sensor.'),
             const SizedBox(height: 12),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
+            if (result != null)
+              Semantics(
+                liveRegion: true,
+                child: Text(switch (result.outcome) {
+                  'target_reached' => 'Exercise completed',
+                  'ended_early' => 'Exercise ended early',
+                  _ => 'Exercise interrupted',
+                }, style: Theme.of(context).textTheme.headlineSmall),
               ),
-              onPressed:
-                  !_loading &&
-                      _error == null &&
-                      live &&
-                      hasThigh &&
-                      !pending &&
-                      !running
-                  ? () => connection.sendSessionCommand(
-                      'thigh_session_begin',
-                      config: {
-                        'exercise_id': widget.exerciseId,
-                        'reference': _reference!.toJson(),
-                      },
-                    )
-                  : null,
-              child: const Text('Start exercise'),
-            ),
+            if (!managed || !_began)
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                ),
+                onPressed:
+                    !_loading &&
+                        _error == null &&
+                        live &&
+                        hasThigh &&
+                        !pending &&
+                        !running &&
+                        (!managed || workout.canChoose)
+                    ? _begin
+                    : null,
+                child: const Text('Start exercise'),
+              ),
             if (running)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -168,32 +269,30 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
                   ),
                   onPressed: pending
                       ? null
-                      : () => connection.sendSessionCommand(
-                          state == 'active'
-                              ? 'thigh_session_end'
-                              : 'thigh_cancel',
-                        ),
+                      : () => managed
+                            ? workout.endExercise()
+                            : connection.sendSessionCommand(
+                                state == 'active'
+                                    ? 'thigh_session_end'
+                                    : 'thigh_cancel',
+                              ),
                   child: Text(state == 'active' ? 'End exercise' : 'Cancel'),
                 ),
               ),
-            const SizedBox(height: 24),
-            Semantics(
-              label: 'Completed repetitions: ${current?.repetitions ?? 0}',
-              excludeSemantics: true,
-              child: Row(
-                children: [
-                  const Expanded(child: Text('Repetitions')),
-                  Text(
-                    '${current?.repetitions ?? 0}',
-                    style: Theme.of(context).textTheme.displaySmall,
-                  ),
-                ],
-              ),
-            ),
             const Divider(height: 24),
             _metric('Thigh tilt', _degrees(current?.tiltDeg)),
             _metric('Latest range', _degrees(current?.latestPeakDeg)),
             _metric('Reference difference', _degrees(current?.differenceDeg)),
+            if (managed && _began && !workout.hasAttempt) ...[
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: pending || workout.needsRetry
+                    ? null
+                    : () => Navigator.of(context).pop(),
+                child: const Text('Return to session'),
+              ),
+            ],
+            if (workout?.busy ?? false) const Text('Saving exercise…'),
           ],
         ],
       );

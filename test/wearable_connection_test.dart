@@ -478,33 +478,41 @@ void main() {
   });
 
   test(
-    'old command and disconnect results cannot overwrite reconnected session',
+    'disconnect coalesces and blocks reconnect until frozen summary is accepted',
     () async {
       final commandGate = Completer<Object?>();
       final stopGate = Completer<Object?>();
+      var connects = 0, disconnects = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(commands, (call) async {
             if (call.method == 'sessionCommand') return commandGate.future;
-            if (call.method == 'disconnect') return stopGate.future;
+            if (call.method == 'connect') connects++;
+            if (call.method == 'disconnect') {
+              disconnects++;
+              return stopGate.future;
+            }
             return null;
           });
       await connection.connect();
       await emit(sample());
       final command = connection.sendSessionCommand('standing');
       final stopped = connection.disconnect();
+      final repeatedStop = connection.disconnect();
       await connection.connect();
-      await emit(
-        sample(time: 10)..['analytics'] = analytics(state: 'active', cycles: 0),
-      );
+      expect(connects, 1);
+      expect(disconnects, 1);
+      expect(connection.commandPending, isTrue);
       commandGate.completeError(PlatformException(code: 'old_failure'));
       stopGate.complete(
         jsonEncode(analytics(state: 'interrupted')..['summary'] = summary()),
       );
-      await Future.wait([command, stopped]);
-      expect(connection.status, WearableStatus.live);
+      await Future.wait([command, stopped, repeatedStop]);
+      expect(connection.status, WearableStatus.disconnected);
       expect(connection.commandError, isNull);
-      expect(connection.analytics!.cycles, 0);
-      expect(connection.analytics!.summary, isNull);
+      expect(connection.analytics!.summary!.cycles, 2);
+      expect(connection.commandPending, isFalse);
+      await connection.connect();
+      expect(connects, 2);
       await emit(
         sample(time: 11)..['analytics'] = analytics(state: 'active', cycles: 1),
       );
@@ -590,7 +598,7 @@ void main() {
     expect(connection.latest!.fsr, 1200);
   });
 
-  test('delayed disconnect cleanup cannot stop a newer connection', () async {
+  test('reconnect waits until delayed event cancellation finishes', () async {
     final gate = Completer<Object?>();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -602,10 +610,12 @@ void main() {
         );
     await connection.connect();
     final stopped = connection.disconnect();
-    final reconnected = connection.connect();
+    await connection.connect();
+    expect(connection.commandPending, isTrue);
+    expect(calls.where((call) => call == 'connect').length, 1);
     gate.complete(null);
-    await reconnected;
     await stopped;
+    await connection.connect();
     expect(calls.last, 'connect');
     expect(connection.status, WearableStatus.connecting);
   });

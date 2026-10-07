@@ -326,6 +326,7 @@ class WearableConnection extends ChangeNotifier {
   final bool _android;
   late final Duration Function() _clock;
   StreamSubscription<dynamic>? _subscription;
+  Future<void>? _disconnecting;
   var _generation = 0;
   var _disposed = false;
   var _status = WearableStatus.idle;
@@ -341,7 +342,7 @@ class WearableConnection extends ChangeNotifier {
   SensorSample? get latest => _latest;
   RehabAnalytics? get analytics => _analytics;
   ThighAnalytics? get thigh => _analytics?.thigh;
-  bool get commandPending => _commandPending;
+  bool get commandPending => _commandPending || _disconnecting != null;
   String? get commandError => _commandError;
   List<HeelPoint> get history => List.unmodifiable(_history);
   bool get active => switch (_status) {
@@ -353,7 +354,7 @@ class WearableConnection extends ChangeNotifier {
   };
 
   Future<void> connect({bool scaleConfirmed = false}) async {
-    if (_disposed || active) return;
+    if (_disposed || active || _disconnecting != null) return;
     if (!_android) {
       _setStatus(
         WearableStatus.unsupported,
@@ -467,7 +468,7 @@ class WearableConnection extends ChangeNotifier {
     String action, {
     Map<String, dynamic>? config,
   }) async {
-    if (_disposed || _commandPending) return;
+    if (_disposed || commandPending) return;
     if (_status != WearableStatus.live) {
       _commandError = 'Connect and wait for live readings before calibration.';
       notifyListeners();
@@ -478,10 +479,13 @@ class WearableConnection extends ChangeNotifier {
     _commandError = null;
     notifyListeners();
     try {
-      await commands.invokeMethod<void>('sessionCommand', {
+      final response = await commands.invokeMethod<dynamic>('sessionCommand', {
         'action': action,
         'config': ?config,
       });
+      if (!_disposed && generation == _generation && response is String) {
+        _acceptAnalytics(_decodeAnalytics(jsonDecode(response)));
+      }
       if (!_disposed &&
           generation == _generation &&
           action == 'start' &&
@@ -527,7 +531,17 @@ class WearableConnection extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> disconnect() async {
+  Future<void> disconnect() {
+    if (_disposed) return Future.value();
+    return _disconnecting ??= Future<void>.microtask(_disconnect).whenComplete(
+      () {
+        _disconnecting = null;
+        if (!_disposed) notifyListeners();
+      },
+    );
+  }
+
+  Future<void> _disconnect() async {
     if (_disposed) return;
     final generation = ++_generation;
     _commandPending = false;

@@ -31,31 +31,65 @@ Map<String, dynamic> validateHeelZero(Map<String, dynamic> json) {
 }
 
 class AppSettings {
-  const AppSettings({this.injuredLeg, this.heelZero});
+  const AppSettings({
+    this.injuredLeg,
+    this.heelZero,
+    this.repTargets = const {'squat': 10, 'sit_to_stand': 10},
+  });
   final String? injuredLeg;
   final Map<String, dynamic>? heelZero;
+  final Map<String, int> repTargets;
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     final leg = json['injured_leg'];
     final zero = json['heel_zero'];
-    if (json.length != 2 ||
+    if ((json.length != 2 && json.length != 3) ||
+        json.keys.any(
+          (key) =>
+              !const {'injured_leg', 'heel_zero', 'rep_targets'}.contains(key),
+        ) ||
         !json.containsKey('injured_leg') ||
         !json.containsKey('heel_zero') ||
         (leg != null && leg != 'left' && leg != 'right') ||
         (zero != null && zero is! Map)) {
       throw const FormatException('Invalid settings');
     }
+    final targets = json.containsKey('rep_targets')
+        ? json['rep_targets']
+        : const {'squat': 10, 'sit_to_stand': 10};
+    if (targets is! Map ||
+        targets.length != 2 ||
+        ['squat', 'sit_to_stand'].any(
+          (id) =>
+              targets[id] is! int ||
+              (targets[id] as int) < 1 ||
+              (targets[id] as int) > 1000,
+        )) {
+      throw const FormatException('Invalid repetition targets');
+    }
     return AppSettings(
       injuredLeg: leg as String?,
       heelZero: zero == null
           ? null
           : validateHeelZero(Map<String, dynamic>.from(zero as Map)),
+      repTargets: Map<String, int>.unmodifiable(Map<String, int>.from(targets)),
     );
   }
+
+  AppSettings copyWith({
+    String? injuredLeg,
+    Map<String, dynamic>? heelZero,
+    Map<String, int>? repTargets,
+  }) => AppSettings(
+    injuredLeg: injuredLeg ?? this.injuredLeg,
+    heelZero: heelZero ?? this.heelZero,
+    repTargets: repTargets ?? this.repTargets,
+  );
 
   Map<String, dynamic> toJson() => {
     'injured_leg': injuredLeg,
     'heel_zero': heelZero,
+    'rep_targets': repTargets,
   };
 }
 

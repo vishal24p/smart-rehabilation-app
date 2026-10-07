@@ -10,15 +10,20 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('rehab/wearable'),
-          (call) async => call.method == 'getExerciseReferences' ? [] : null,
+          (call) async {
+ if (call.method == 'getExerciseReferences' || call.method == 'getWorkoutSessions') return [];
+ if (call.method == 'getSettings') return {'injured_leg': null, 'heel_zero': null};
+ if (call.method == 'saveWorkoutSession') return call.arguments;
+ return null;
+ },
         );
   });
-  testWidgets('home shows two exercises without fabricated results', (
+  testWidgets('home starts sessions without fabricated results', (
     tester,
   ) async {
     await tester.pumpWidget(const MyApp());
-    expect(find.text('Squat'), findsOneWidget);
-    expect(find.text('Sit-to-stand'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('Start session'), findsOneWidget);
     expect(find.textContaining('Praveen'), findsNothing);
     expect(find.textContaining('accuracy'), findsNothing);
     expect(find.textContaining('Completed'), findsNothing);
@@ -32,6 +37,9 @@ void main() {
   }.entries) {
     testWidgets('${entry.key} opens its selected live session', (tester) async {
       await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Start session'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text(entry.key));
       await tester.pumpAndSettle();
       expect(
@@ -42,7 +50,7 @@ void main() {
       );
       await tester.tap(find.byType(BackButton));
       await tester.pumpAndSettle();
-      expect(find.text('Your exercises'), findsOneWidget);
+      expect(find.text('Choose an exercise'), findsOneWidget);
     });
   }
   testWidgets('navigation opens registration and sensors exclusively', (

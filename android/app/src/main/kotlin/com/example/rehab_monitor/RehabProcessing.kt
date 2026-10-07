@@ -155,6 +155,10 @@ class RehabProcessing(
                 if (action == "thigh_session_begin") {
                     val reference = ExerciseReferencePayload.validate(config["reference"])
                     require(reference["exercise_id"] == config["exercise_id"]) { "Reference must match the exercise." }
+                    if (config.containsKey("rep_target")) {
+                        val target = config["rep_target"]
+                        require(target is Int && target in 1..1000) { "Choose a whole-number rep target from 1 to 1000." }
+                    }
                 }
             }
             if (action == "configure") {

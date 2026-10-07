@@ -11,11 +11,13 @@ class ExerciseReferenceScreen extends StatefulWidget {
     this.exerciseId,
     this.connection,
     this.store,
+    this.disconnectOnDispose = true,
     super.key,
   });
   final String? exerciseId;
   final WearableConnection? connection;
   final ExerciseReferenceStore? store;
+  final bool disconnectOnDispose;
 
   @override
   State<ExerciseReferenceScreen> createState() =>
@@ -110,7 +112,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
     WidgetsBinding.instance.removeObserver(this);
     if (widget.connection == null) {
       _connection.dispose();
-    } else {
+    } else if (widget.disconnectOnDispose) {
       unawaited(_connection.disconnect());
     }
     super.dispose();
@@ -141,6 +143,10 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
               final live = _connection.status == WearableStatus.live;
               final available = _connection.latest?.thighAccel != null;
               final saved = _references[_exerciseId];
+              final finishReady =
+                  current?.recordedPeakDeg != null &&
+                  current?.tiltDeg != null &&
+                  current!.tiltDeg! <= 10;
               return ListView(
                 padding: const EdgeInsets.all(24),
                 children: [
@@ -214,13 +220,27 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                   const SizedBox(height: 16),
                   if (state == 'zeroing')
                     SessionZeroCountdown(progress: current!.zeroProgress),
-                  if (state == 'recording')
+                  if (state == 'recording') ...[
                     Semantics(
                       liveRegion: true,
-                      child: const Text(
-                        'Zero set. Move once, then return standing.',
+                      child: Text(
+                        current?.recordedPeakDeg == null
+                            ? 'Zero set. Bend at least 30°, pause briefly, then return standing.'
+                            : finishReady
+                            ? 'Movement captured. Ready to finish.'
+                            : 'Movement captured. Return standing.',
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Thigh tilt: ${current?.tiltDeg == null ? '—' : '${current!.tiltDeg!.toStringAsFixed(1)}°'}',
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Captured range: ${current?.recordedPeakDeg == null ? '—' : '${current!.recordedPeakDeg!.toStringAsFixed(1)}°'}',
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   if (current?.reason != null)
                     Semantics(liveRegion: true, child: Text(current!.reason!)),
                   if (_connection.commandError != null)
@@ -255,7 +275,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(52),
                       ),
-                      onPressed: pending
+                      onPressed: pending || !live || !finishReady
                           ? null
                           : () => _connection.sendSessionCommand(
                               'thigh_reference_finish',

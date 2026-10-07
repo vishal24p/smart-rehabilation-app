@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'app_settings.dart';
+import 'exercise_reference.dart';
 import 'wearable_connection.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -20,11 +21,17 @@ class _SettingsScreenState extends State<SettingsScreen>
   late final AppSettingsStore _store;
   AppSettings _settings = const AppSettings();
   AppSettings? _unsaved;
+  final _targetsForm = GlobalKey<FormState>();
+  final _targetFields = {
+    'squat': TextEditingController(text: '10'),
+    'sit_to_stand': TextEditingController(text: '10'),
+  };
   bool _loading = true,
       _saving = false,
       _capturing = false,
       _sawCapture = false;
   String? _error, _message;
+  bool _targetFeedback = false;
 
   @override
   void initState() {
@@ -43,7 +50,14 @@ class _SettingsScreenState extends State<SettingsScreen>
     });
     try {
       final settings = await _store.load();
-      if (mounted) setState(() => _settings = settings);
+      if (mounted) {
+        setState(() {
+          _settings = settings;
+          for (final entry in _targetFields.entries) {
+            entry.value.text = '${settings.repTargets[entry.key]}';
+          }
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _error = 'Settings unavailable. Retry loading.');
@@ -53,12 +67,17 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
-  Future<void> _save(AppSettings settings, String success) async {
+  Future<void> _save(
+    AppSettings settings,
+    String success, {
+    bool forTargets = false,
+  }) async {
     setState(() {
       _saving = true;
       _unsaved = settings;
       _error = null;
       _message = null;
+      _targetFeedback = forTargets;
     });
     try {
       final saved = await _store.save(settings);
@@ -77,6 +96,7 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   Future<void> _capture() async {
     setState(() {
+      _targetFeedback = false;
       _capturing = true;
       _sawCapture = false;
       _error = null;
@@ -101,6 +121,21 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
+  Future<void> _saveTargets() async {
+    if (!(_targetsForm.currentState?.validate() ?? false)) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    await _save(
+      _settings.copyWith(
+        repTargets: {
+          for (final entry in _targetFields.entries)
+            entry.key: int.parse(entry.value.text.trim()),
+        },
+      ),
+      'Repetition targets saved',
+      forTargets: true,
+    );
+  }
+
   void _changed() {
     if (!mounted) return;
     final snapshot = _connection.analytics;
@@ -120,10 +155,7 @@ class _SettingsScreenState extends State<SettingsScreen>
             snapshot.progress == 1) {
           unawaited(
             _save(
-              AppSettings(
-                injuredLeg: _settings.injuredLeg,
-                heelZero: snapshot.heelZero,
-              ),
+              _settings.copyWith(heelZero: snapshot.heelZero),
               'Baseline saved',
             ),
           );
@@ -150,6 +182,9 @@ class _SettingsScreenState extends State<SettingsScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _connection.removeListener(_changed);
+    for (final controller in _targetFields.values) {
+      controller.dispose();
+    }
     if (widget.connection == null) {
       _connection.dispose();
     } else {
@@ -196,14 +231,85 @@ class _SettingsScreenState extends State<SettingsScreen>
                           if (values.isEmpty) return;
                           unawaited(
                             _save(
-                              AppSettings(
-                                injuredLeg: values.single,
-                                heelZero: _settings.heelZero,
-                              ),
+                              _settings.copyWith(injuredLeg: values.single),
                               'Injured leg saved',
                             ),
                           );
                         },
+                ),
+                const SizedBox(height: 32),
+                Text(
+                  'Repetition targets',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Each exercise stops automatically at its target. Changes apply to new exercises.',
+                ),
+                const SizedBox(height: 16),
+                Form(
+                  key: _targetsForm,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final entry in _targetFields.entries) ...[
+                        TextFormField(
+                          key: ValueKey('${entry.key}-rep-target'),
+                          controller: entry.value,
+                          enabled: !busy && _error == null,
+                          keyboardType: TextInputType.number,
+                          textInputAction: entry.key == 'squat'
+                              ? TextInputAction.next
+                              : TextInputAction.done,
+                          decoration: InputDecoration(
+                            labelText:
+                                '${exerciseNames[entry.key]} repetitions',
+                            helperText: '1–1000 repetitions',
+                            border: const OutlineInputBorder(),
+                          ),
+                          validator: (value) {
+                            final text = value?.trim() ?? '';
+                            final number = int.tryParse(text);
+                            return RegExp(r'^[0-9]+$').hasMatch(text) &&
+                                    number != null &&
+                                    number >= 1 &&
+                                    number <= 1000
+                                ? null
+                                : 'Enter a whole number from 1 to 1000.';
+                          },
+                          onFieldSubmitted: entry.key == 'sit_to_stand' && !busy
+                              ? (_) => unawaited(_saveTargets())
+                              : null,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      FilledButton.tonal(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48),
+                        ),
+                        onPressed: busy || _error != null ? null : _saveTargets,
+                        child: const Text('Save targets'),
+                      ),
+                      if (_targetFeedback && _message != null) ...[
+                        const SizedBox(height: 12),
+                        Semantics(liveRegion: true, child: Text(_message!)),
+                      ],
+                      if (_targetFeedback && _error != null) ...[
+                        const SizedBox(height: 12),
+                        Semantics(liveRegion: true, child: Text(_error!)),
+                        TextButton(
+                          onPressed: busy
+                              ? null
+                              : () => _save(
+                                  _unsaved!,
+                                  'Repetition targets saved',
+                                  forTargets: true,
+                                ),
+                          child: const Text('Retry saving'),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 32),
                 Text(
@@ -257,11 +363,11 @@ class _SettingsScreenState extends State<SettingsScreen>
                   const SizedBox(height: 12),
                   const LinearProgressIndicator(),
                 ],
-                if (_message != null) ...[
+                if (!_targetFeedback && _message != null) ...[
                   const SizedBox(height: 12),
                   Text(_message!, semanticsLabel: _message),
                 ],
-                if (_error != null) ...[
+                if (!_targetFeedback && _error != null) ...[
                   const SizedBox(height: 12),
                   Text(_error!),
                   TextButton(

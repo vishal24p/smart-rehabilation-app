@@ -14,6 +14,57 @@ Map<String, dynamic> referenceJson() => {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'frozen thigh result validates targets, metrics and unavailable snapshots',
+    () {
+      final payload = <String, dynamic>{
+        'repetitions': 2,
+        'rep_target': 2,
+        'active_s': 6.25,
+        'latest_peak_deg': 65.0,
+        'reference_peak_deg': 70.0,
+        'difference_deg': -5.0,
+        'outcome': 'target_reached',
+      };
+      final result = ThighExerciseResult.fromJson(payload);
+      expect(result.toJson(), payload);
+      final analytics = ThighAnalytics(
+        state: 'ended',
+        repetitions: 2,
+        result: result,
+      );
+      expect(analytics.unavailable('Disconnected').result?.toJson(), payload);
+      for (final edit in [
+        {'rep_target': 0},
+        {'rep_target': 1001},
+        {'rep_target': 2.0},
+        {'rep_target': null},
+        {'repetitions': 1},
+        {'repetitions': -1},
+        {'active_s': double.infinity},
+        {'active_s': -1},
+        {'outcome': 'complete'},
+        {'latest_peak_deg': double.nan},
+        {'difference_deg': 5.0},
+      ]) {
+        expect(
+          () => ThighExerciseResult.fromJson({...payload, ...edit}),
+          throwsFormatException,
+        );
+      }
+      expect(
+        ThighExerciseResult.fromJson({
+          ...payload,
+          'repetitions': 0,
+          'rep_target': null,
+          'latest_peak_deg': null,
+          'difference_deg': null,
+          'outcome': 'ended_early',
+        }).latestPeakDeg,
+        isNull,
+      );
+    },
+  );
   test('reference round trips and rejects invalid targets', () {
     expect(
       ExerciseReference.fromJson(referenceJson()).toJson(),

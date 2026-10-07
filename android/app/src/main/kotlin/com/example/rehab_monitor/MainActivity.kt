@@ -51,11 +51,23 @@ class MainActivity : FlutterActivity() {
                             )
                         }
                     }
+                    "getWorkoutSessions", "saveWorkoutSession" -> referenceWorker.execute {
+                        val response = runCatching {
+                            if (call.method == "getWorkoutSessions") references.loadSessions()
+                            else references.saveSession(call.arguments)
+                        }
+                        runOnUiThread {
+                            response.fold(
+                                onSuccess = { result.success(it) },
+                                onFailure = { result.error("session_storage_failed", "Could not load or save the session. Retry.", null) },
+                            )
+                        }
+                    }
                     "connect" -> { wearable.connect(call.argument<Boolean>("scaleConfirmed") ?: false); result.success(null) }
                     "disconnect" -> wearable.disconnect { snapshot -> result.success(snapshot) }
                     "sessionCommand" -> wearable.sessionCommand(call.arguments) { response ->
                         response.fold(
-                            onSuccess = { result.success(null) },
+                            onSuccess = { result.success(it) },
                             onFailure = { error ->
                                 val code = when (error) {
                                     is IllegalArgumentException -> "invalid_session_command"

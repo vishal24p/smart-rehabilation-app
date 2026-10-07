@@ -6,11 +6,18 @@ import 'rehab_session_panel.dart';
 import 'thigh_session_panel.dart';
 import 'exercise_reference.dart';
 import 'app_settings.dart';
+import 'workout_session.dart';
 
 class LiveSensorScreen extends StatefulWidget {
-  const LiveSensorScreen({this.connection, this.exerciseId, super.key});
+  const LiveSensorScreen({
+    this.connection,
+    this.exerciseId,
+    this.workout,
+    super.key,
+  });
   final WearableConnection? connection;
   final String? exerciseId;
+  final WorkoutSessionController? workout;
 
   @override
   State<LiveSensorScreen> createState() => _LiveSensorScreenState();
@@ -26,8 +33,9 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
   @override
   void initState() {
     super.initState();
-    _connection = widget.connection ?? WearableConnection();
-    WidgetsBinding.instance.addObserver(this);
+    _connection =
+        widget.workout?.connection ?? widget.connection ?? WearableConnection();
+    if (widget.workout == null) WidgetsBinding.instance.addObserver(this);
     unawaited(_loadSettings());
   }
 
@@ -59,7 +67,9 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    if (widget.connection == null) {
+    if (widget.workout != null) {
+      // The session route owns the connection across exercise routes.
+    } else if (widget.connection == null) {
       _connection.dispose();
     } else {
       unawaited(_connection.disconnect());
@@ -79,7 +89,10 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
           child: AnimatedBuilder(
-            animation: _connection,
+            animation: Listenable.merge([
+              _connection,
+              if (widget.workout != null) widget.workout!,
+            ]),
             builder: (context, _) {
               final readings = _connection.latest;
               final analytics = _connection.analytics;
@@ -114,11 +127,17 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                         flex: 2,
                         child: FilledButton.icon(
                           onPressed:
-                              _connection.status == WearableStatus.unsupported
+                              _connection.status ==
+                                      WearableStatus.unsupported ||
+                                  _connection.commandPending ||
+                                  (widget.workout?.busy ?? false)
                               ? null
                               : () {
                                   if (active) {
-                                    unawaited(_connection.disconnect());
+                                    unawaited(
+                                      widget.workout?.interrupt() ??
+                                          _connection.disconnect(),
+                                    );
                                   } else {
                                     unawaited(
                                       _connection.connect(
@@ -168,6 +187,7 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                     ThighSessionPanel(
                       connection: _connection,
                       exerciseId: widget.exerciseId!,
+                      workout: widget.workout,
                     )
                   else
                     ExpansionTile(

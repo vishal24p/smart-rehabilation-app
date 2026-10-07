@@ -18,10 +18,10 @@ void main() {
         'MaterialIcons',
       )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
     });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(const MethodChannel('rehab/wearable'), (call) async => call.method == 'getWorkoutSessions' ? [] : null);
     await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
-    expect(find.text('Squat'), findsOneWidget);
-    expect(find.text('Sit-to-stand'), findsOneWidget);
+    expect(find.text('Start session'), findsOneWidget);
     expect(find.text('78%'), findsNothing);
     expect(tester.takeException(), isNull);
   });

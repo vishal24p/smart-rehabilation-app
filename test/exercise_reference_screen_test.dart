@@ -64,6 +64,9 @@ void main() {
     double? latest,
     double? difference,
     int repetitions = 0,
+    String exerciseId = 'squat',
+    double? tilt,
+    String? reason,
   }) async {
     await tester.runAsync(
       () => fixtures.emit(
@@ -71,10 +74,10 @@ void main() {
           ..['analytics'] = (fixtures.analytics()
             ..['thigh'] = {
               'state': state,
-              'exercise_id': 'squat',
-              'reason': null,
+              'exercise_id': exerciseId,
+              'reason': reason,
               'zero_progress': progress,
-              'tilt_deg': null,
+              'tilt_deg': tilt,
               'reference_peak_deg': 45.0,
               'recorded_peak_deg': peak,
               'latest_peak_deg': latest,
@@ -202,27 +205,145 @@ void main() {
     },
   );
 
-  testWidgets('missing reference points to Register without another route', (
-    tester,
-  ) async {
-    records = [];
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ThighSessionPanel(
+  for (final exerciseId in exerciseNames.keys) {
+    testWidgets('$exerciseId recorder shows actual movement and gates Finish', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ExerciseReferenceScreen(
+            exerciseId: exerciseId,
             connection: connection,
-            exerciseId: 'squat',
             store: store,
           ),
         ),
-      ),
+      );
+      await tester.pumpAndSettle();
+      await connection.connect();
+      await snapshot(tester, 'recording', exerciseId: exerciseId);
+      await tester.scrollUntilVisible(find.text('Finish recording'), 100);
+      FilledButton finish() => tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Finish recording'),
+      );
+      expect(find.text('Thigh tilt: —'), findsOneWidget);
+      expect(find.text('Captured range: —'), findsOneWidget);
+      expect(
+        find.text(
+          'Zero set. Bend at least 30°, pause briefly, then return standing.',
+        ),
+        findsOneWidget,
+      );
+      expect(finish().onPressed, isNull);
+      await snapshot(tester, 'recording', exerciseId: exerciseId, tilt: 35);
+      expect(find.text('Thigh tilt: 35.0°'), findsOneWidget);
+      expect(finish().onPressed, isNull);
+      await snapshot(
+        tester,
+        'recording',
+        exerciseId: exerciseId,
+        tilt: 15,
+        peak: 50,
+      );
+      expect(find.text('Captured range: 50.0°'), findsOneWidget);
+      expect(find.text('Movement captured. Return standing.'), findsOneWidget);
+      expect(finish().onPressed, isNull);
+      await snapshot(
+        tester,
+        'recording',
+        exerciseId: exerciseId,
+        tilt: 10,
+        peak: 50,
+      );
+      expect(find.text('Movement captured. Ready to finish.'), findsOneWidget);
+      expect(finish().onPressed, isNotNull);
+      await snapshot(tester, 'recording', exerciseId: exerciseId, peak: 50);
+      expect(finish().onPressed, isNull);
+      await snapshot(
+        tester,
+        'recording',
+        exerciseId: exerciseId,
+        tilt: 0,
+        reason: 'Short sample gap; stand upright to recover.',
+      );
+      expect(find.text('Captured range: —'), findsOneWidget);
+      expect(
+        find.text('Short sample gap; stand upright to recover.'),
+        findsOneWidget,
+      );
+      expect(finish().onPressed, isNull);
+      await snapshot(
+        tester,
+        'interrupted',
+        exerciseId: exerciseId,
+        reason: 'Thigh timestamp reset; restart recording.',
+      );
+      expect(find.text('Finish recording'), findsNothing);
+      expect(
+        find.text('Thigh timestamp reset; restart recording.'),
+        findsOneWidget,
+      );
+    });
+    testWidgets(
+      '$exerciseId missing reference keeps counter and opens inline recorder',
+      (tester) async {
+        records = [];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: ThighSessionPanel(
+                connection: connection,
+                exerciseId: exerciseId,
+                store: store,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.text(
+            'Counting has not started. Set a movement reference first.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Repetitions'), findsOneWidget);
+        expect(find.text('0'), findsOneWidget);
+        await connection.connect();
+        await snapshot(tester, 'idle', exerciseId: exerciseId);
+        await tester.tap(find.text('Set movement reference'));
+        await tester.pumpAndSettle();
+        final recorder = tester.widget<ExerciseReferenceScreen>(
+          find.byType(ExerciseReferenceScreen),
+        );
+        expect(recorder.exerciseId, exerciseId);
+        expect(recorder.disconnectOnDispose, isFalse);
+        await snapshot(tester, 'recording', exerciseId: exerciseId);
+        records = [reference(45)..['exercise_id'] = exerciseId];
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(connection.status, WearableStatus.live);
+        expect((commands.last.arguments as Map)['action'], 'thigh_cancel');
+        expect(find.text('Start exercise'), findsOneWidget);
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Start exercise'),
+              )
+              .onPressed,
+          isNotNull,
+        );
+        await snapshot(
+          tester,
+          'active',
+          repetitions: 4,
+          exerciseId: exerciseId,
+        );
+        expect(find.text('4'), findsOneWidget);
+        expect(find.text('Record exercise reference'), findsNothing);
+        expect(find.text('Edit exercise reference'), findsNothing);
+        expect(find.byType(ExerciseReferenceScreen), findsNothing);
+      },
     );
-    await tester.pumpAndSettle();
-    expect(find.text('Set a reference in the Register tab.'), findsOneWidget);
-    expect(find.text('Record exercise reference'), findsNothing);
-    expect(find.text('Edit exercise reference'), findsNothing);
-    expect(find.byType(ExerciseReferenceScreen), findsNothing);
-  });
+  }
 
   testWidgets(
     'countdown respects reduced motion and reference page fits large text',
@@ -252,6 +373,14 @@ void main() {
         100,
         maxScrolls: 80,
       );
+      expect(tester.takeException(), isNull);
+      await snapshot(tester, 'recording', tilt: 35, peak: 50);
+      await tester.scrollUntilVisible(
+        find.text('Captured range: 50.0°'),
+        100,
+        maxScrolls: 80,
+      );
+      expect(find.text('Thigh tilt: 35.0°'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

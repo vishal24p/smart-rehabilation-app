@@ -215,9 +215,10 @@ class SessionProcessor:
         self.progress = 0.0
         self._clear_cycle()
 
-    def interrupt(self, reason: str) -> dict:
+    def interrupt(self, reason: str, interrupt_thigh: bool = True) -> dict:
         saved_zero = self.heel_zero
-        self.thigh.interrupt(reason)
+        if interrupt_thigh:
+            self.thigh.interrupt(reason)
         active = self.state == 'active'
         if active:
             self._freeze(True)
@@ -278,7 +279,15 @@ class SessionProcessor:
         if t == self.last_t:
             return self.snapshot()
         if self.last_t is not None and (t < self.last_t or (t-self.last_t)/1e6 > MAX_GAP_S):
-            return self.interrupt('Device timestamp reset or sample gap; repeat calibration.')
+            reason = (f'Device timestamp reset ({self.last_t} to {t} us); repeat calibration.'
+                      if t < self.last_t else f'Device sample gap {(t-self.last_t)/1000:.0f} ms; repeat calibration.')
+            if self.thigh.state == 'recording' and 0 < (t-self.last_t)/1e6 <= GRAVITY_TIMEOUT_S:
+                # Preserve independent reference recovery while invalidating legacy motion.
+                self.interrupt(reason, interrupt_thigh=False)
+                self.thigh.process(sample)
+                self.last_t = t
+                return self.snapshot()
+            return self.interrupt(reason)
         dt = 0.0 if self.last_t is None else (t - self.last_t)/1e6
         self.last_t = t
         self.heel_saturated = self._heel_is_saturated('right', sample['fsr'])

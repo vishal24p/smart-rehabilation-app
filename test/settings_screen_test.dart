@@ -67,7 +67,81 @@ void main() {
     );
   });
 
+  test('old settings default targets and copy keeps saved sensor setup', () {
+    final settings = AppSettings.fromJson({
+      'injured_leg': 'left',
+      'heel_zero': zero,
+    });
+    expect(settings.repTargets, {'squat': 10, 'sit_to_stand': 10});
+    final edited = settings.copyWith(
+      repTargets: {'squat': 12, 'sit_to_stand': 8},
+    );
+    expect(edited.injuredLeg, 'left');
+    expect(edited.heelZero, zero);
+    expect(AppSettings.fromJson(edited.toJson()).repTargets, {
+      'squat': 12,
+      'sit_to_stand': 8,
+    });
+    expect(
+      () => AppSettings.fromJson({
+        ...edited.toJson(),
+        'rep_targets': {'squat': 0, 'sit_to_stand': 10},
+      }),
+      throwsFormatException,
+    );
+  });
+
+  testWidgets(
+    'target form saves both values without replacing leg or baseline',
+    (tester) async {
+      saved = {
+        'injured_leg': 'right',
+        'heel_zero': zero,
+        'rep_targets': {'squat': 10, 'sit_to_stand': 10},
+      };
+      await tester.pumpWidget(
+        MaterialApp(home: SettingsScreen(connection: connection)),
+      );
+      await tester.pumpAndSettle();
+      final squat = find.byKey(const ValueKey('squat-rep-target'));
+      final sit = find.byKey(const ValueKey('sit_to_stand-rep-target'));
+      await tester.scrollUntilVisible(
+        squat,
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.enterText(squat, '14');
+      await tester.enterText(sit, '7');
+      await tester.ensureVisible(find.text('Save targets'));
+      await tester.tap(find.text('Save targets'));
+      await tester.pumpAndSettle();
+      expect(saved['rep_targets'], {'squat': 14, 'sit_to_stand': 7});
+      expect(saved['injured_leg'], 'right');
+      expect(saved['heel_zero'], zero);
+    },
+  );
+
+  testWidgets('invalid target does not write settings', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: SettingsScreen(connection: connection)),
+    );
+    await tester.pumpAndSettle();
+    final squat = find.byKey(const ValueKey('squat-rep-target'));
+    await tester.scrollUntilVisible(
+      squat,
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.enterText(squat, '1.5');
+    await tester.ensureVisible(find.text('Save targets'));
+    await tester.tap(find.text('Save targets'));
+    await tester.pumpAndSettle();
+    expect(saved, {'injured_leg': null, 'heel_zero': null});
+    expect(find.text('Enter a whole number from 1 to 1000.'), findsOneWidget);
+  });
+
   testWidgets('injured leg persists and reloads', (tester) async {
+    saved['rep_targets'] = {'squat': 14, 'sit_to_stand': 7};
     await tester.pumpWidget(
       MaterialApp(home: SettingsScreen(connection: connection)),
     );
@@ -75,7 +149,12 @@ void main() {
     await tester.tap(find.text('Right'));
     await tester.pumpAndSettle();
     expect(saved['injured_leg'], 'right');
-    await tester.scrollUntilVisible(find.text('Injured leg saved'), 150);
+    expect(saved['rep_targets'], {'squat': 14, 'sit_to_stand': 7});
+    await tester.scrollUntilVisible(
+      find.text('Injured leg saved'),
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Injured leg saved'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(
@@ -94,6 +173,7 @@ void main() {
     tester,
   ) async {
     saved['heel_zero'] = zero;
+    saved['rep_targets'] = {'squat': 12, 'sit_to_stand': 9};
     await tester.pumpWidget(
       MaterialApp(home: SettingsScreen(connection: connection)),
     );
@@ -108,7 +188,11 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.scrollUntilVisible(find.text('Capture unloaded sensors'), 150);
+    await tester.scrollUntilVisible(
+      find.text('Capture unloaded sensors'),
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Capture unloaded sensors'));
     await tester.pump();
     expect(actions, ['heel_zero']);
@@ -131,9 +215,14 @@ void main() {
       }),
     );
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Baseline saved'), 100);
+    await tester.scrollUntilVisible(
+      find.text('Baseline saved'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Baseline saved'), findsOneWidget);
     expect(saved['heel_zero'], zero);
+    expect(saved['rep_targets'], {'squat': 12, 'sit_to_stand': 9});
   });
 
   testWidgets('save failure keeps old leg and permits retry', (tester) async {
@@ -146,7 +235,11 @@ void main() {
     await tester.tap(find.text('Right'));
     await tester.pumpAndSettle();
     expect(saved['injured_leg'], 'left');
-    await tester.scrollUntilVisible(find.text('Retry saving'), 150);
+    await tester.scrollUntilVisible(
+      find.text('Retry saving'),
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.ensureVisible(find.text('Retry saving'));
     await tester.pumpAndSettle();
     failSave = false;
@@ -174,6 +267,7 @@ void main() {
       await tester.scrollUntilVisible(
         find.text('Capture unloaded sensors'),
         150,
+        scrollable: find.byType(Scrollable).first,
       );
       await tester.tap(find.text('Capture unloaded sensors'));
       await tester.pump();
@@ -181,7 +275,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(saved['heel_zero'], isNull);
       expect(find.text('Baseline saved'), findsNothing);
-      await tester.scrollUntilVisible(find.text('Retry capture'), 100);
+      await tester.scrollUntilVisible(
+        find.text('Retry capture'),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(
         find.text('Capture stopped. Reconnect and retry.'),
         findsOneWidget,

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'exercise_reference.dart';
+import 'session_home_screen.dart';
 import 'exercise_reference_screen.dart';
 import 'live_sensor_screen.dart';
 import 'settings_screen.dart';
@@ -8,7 +8,6 @@ const ink = Color(0xFF252B29);
 const muted = Color(0xFF656C68);
 const line = Color(0xFFE8EBE8);
 const sage = Color(0xFF47664F);
-const lilac = Color(0xFF78658C);
 
 void main() => runApp(const MyApp());
 
@@ -92,9 +91,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selected = 0;
-  static const _labels = ['Exercises', 'Register', 'Sensors', 'Settings'];
+  static const _labels = ['Home', 'Register', 'Sensors', 'Settings'];
   static const _icons = [
-    Icons.directions_walk_rounded,
+    Icons.home_outlined,
     Icons.bookmark_outline_rounded,
     Icons.sensors_rounded,
     Icons.settings_outlined,
@@ -106,7 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
       1 => const ExerciseReferenceScreen(),
       2 => const LiveSensorScreen(),
       3 => const SettingsScreen(),
-      _ => const _Exercises(),
+      _ => const SessionHomeScreen(),
     };
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -155,69 +154,4 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
   }
-}
-
-class _Exercises extends StatelessWidget {
-  const _Exercises();
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('rehab')),
-    body: SafeArea(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: ListView(
-            padding: const EdgeInsets.all(24),
-            children: [
-              Text(
-                'Your exercises',
-                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Tap to begin.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 32),
-              for (final exercise in exerciseNames.entries)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: FilledButton.tonal(
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(96),
-                      padding: const EdgeInsets.all(24),
-                      alignment: Alignment.centerLeft,
-                    ),
-                    onPressed: () => Navigator.of(context).push<void>(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            LiveSensorScreen(exerciseId: exercise.key),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            exercise.value,
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        const Icon(Icons.arrow_forward_rounded),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
 }

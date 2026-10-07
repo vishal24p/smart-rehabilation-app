@@ -87,6 +87,98 @@ class ExerciseReferenceStore {
   }
 }
 
+class ThighExerciseResult {
+  const ThighExerciseResult({
+    required this.repetitions,
+    this.repTarget,
+    required this.activeS,
+    this.latestPeakDeg,
+    this.referencePeakDeg,
+    this.differenceDeg,
+    required this.outcome,
+  });
+
+  final int repetitions;
+  final int? repTarget;
+  final double activeS;
+  final double? latestPeakDeg, referencePeakDeg, differenceDeg;
+  final String outcome;
+
+  factory ThighExerciseResult.fromJson(Map<String, dynamic> json) {
+    const keys = {
+      'repetitions',
+      'rep_target',
+      'active_s',
+      'latest_peak_deg',
+      'reference_peak_deg',
+      'difference_deg',
+      'outcome',
+    };
+    final repetitions = json['repetitions'];
+    final target = json['rep_target'];
+    final seconds = json['active_s'];
+    final outcome = json['outcome'];
+    if (!keys.every(json.containsKey) ||
+        repetitions is! int ||
+        repetitions < 0 ||
+        (target != null && (target is! int || target < 1 || target > 1000)) ||
+        seconds is! num ||
+        !seconds.isFinite ||
+        seconds < 0 ||
+        !const {
+          'target_reached',
+          'ended_early',
+          'interrupted',
+        }.contains(outcome) ||
+        (target is int && repetitions > target) ||
+        (outcome == 'target_reached' &&
+            (target == null || repetitions != target))) {
+      throw const FormatException('Invalid thigh exercise result');
+    }
+    double? metric(String key, {bool signed = false}) {
+      final value = json[key];
+      if (value == null) return null;
+      if (value is! num ||
+          !value.isFinite ||
+          value.abs() > 180 ||
+          (!signed && value < 0)) {
+        throw FormatException('Invalid result $key');
+      }
+      return value.toDouble();
+    }
+
+    final latest = metric('latest_peak_deg');
+    final reference = metric('reference_peak_deg');
+    final difference = metric('difference_deg', signed: true);
+    if (((latest == null || reference == null) && difference != null) ||
+        (latest != null &&
+            reference != null &&
+            (difference == null ||
+                (difference - (latest - reference)).abs() > 0.000001))) {
+      throw const FormatException('Invalid reference difference');
+    }
+    return ThighExerciseResult(
+      repetitions: repetitions,
+      repTarget: target as int?,
+      activeS: seconds.toDouble(),
+      latestPeakDeg: latest,
+      referencePeakDeg: reference,
+      differenceDeg: difference,
+      outcome: outcome as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'repetitions': repetitions,
+    'rep_target': repTarget,
+    'active_s': activeS,
+    'latest_peak_deg': latestPeakDeg,
+    'reference_peak_deg': referencePeakDeg,
+    'difference_deg': differenceDeg,
+    'outcome': outcome,
+  };
+}
+
 class ThighAnalytics {
   const ThighAnalytics({
     required this.state,
@@ -99,6 +191,7 @@ class ThighAnalytics {
     this.latestPeakDeg,
     this.differenceDeg,
     this.repetitions = 0,
+    this.result,
   });
   final String state;
   final String? exerciseId, reason;
@@ -109,6 +202,7 @@ class ThighAnalytics {
       latestPeakDeg,
       differenceDeg;
   final int repetitions;
+  final ThighExerciseResult? result;
 
   factory ThighAnalytics.fromJson(Map<String, dynamic> json) {
     double? metric(String key, {bool signed = false}) {
@@ -128,6 +222,7 @@ class ThighAnalytics {
     final reason = json['reason'];
     final progress = json['zero_progress'];
     final count = json['repetitions'];
+    final result = json['result'];
     if (!const {
           'idle',
           'zeroing',
@@ -144,7 +239,8 @@ class ThighAnalytics {
         progress < 0 ||
         progress > 1 ||
         count is! int ||
-        count < 0) {
+        count < 0 ||
+        (result != null && result is! Map<String, dynamic>)) {
       throw const FormatException('Invalid thigh analytics');
     }
     return ThighAnalytics(
@@ -158,6 +254,9 @@ class ThighAnalytics {
       recordedPeakDeg: metric('recorded_peak_deg'),
       latestPeakDeg: metric('latest_peak_deg'),
       differenceDeg: metric('difference_deg', signed: true),
+      result: result == null
+          ? null
+          : ThighExerciseResult.fromJson(result as Map<String, dynamic>),
     );
   }
 
@@ -167,5 +266,6 @@ class ThighAnalytics {
     reason: message,
     referencePeakDeg: referencePeakDeg,
     repetitions: repetitions,
+    result: result,
   );
 }

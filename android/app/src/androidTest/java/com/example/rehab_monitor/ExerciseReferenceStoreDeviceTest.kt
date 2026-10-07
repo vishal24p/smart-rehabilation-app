@@ -5,6 +5,57 @@ import org.json.JSONObject
 
 @Suppress("DEPRECATION")
 class ExerciseReferenceStoreDeviceTest : AndroidTestCase() {
+    fun testVersionTwoSettingsAndSessionsSurviveMigrationAndRetry() {
+        val name = "workout_migration_device_test.db"
+        context.deleteDatabase(name)
+        val zero = mapOf("version" to 1, "adc_max" to 1023,
+            "left" to mapOf("baseline" to 13.0, "deadband" to 5.0),
+            "right" to mapOf("baseline" to 13.0, "deadband" to 5.0))
+        val oldSettings = mapOf("injured_leg" to "right", "heel_zero" to zero)
+        val session = mapOf("id" to "session-retry", "started_at" to "2026-10-06T12:00:00Z",
+            "ended_at" to null, "status" to "active", "exercises" to emptyList<Map<String, Any?>>())
+        val result = mapOf("repetitions" to 1, "rep_target" to 10, "active_s" to 4.5,
+            "latest_peak_deg" to null, "reference_peak_deg" to 70.0, "difference_deg" to null, "outcome" to "interrupted")
+        val attempt = mapOf("id" to "attempt-retry", "exercise_id" to "squat", "started_at" to "2026-10-06T12:00:01Z",
+            "ended_at" to "2026-10-06T12:00:10Z", "result" to result)
+        val ended = session + mapOf("ended_at" to "2026-10-06T12:00:11Z", "status" to "ended", "exercises" to listOf(attempt))
+        try {
+            context.openOrCreateDatabase(name, 0, null).use { old ->
+                old.execSQL("CREATE TABLE exercise_references (exercise_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+                old.execSQL("CREATE TABLE app_settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)")
+                old.execSQL("INSERT INTO app_settings VALUES (1, ?)", arrayOf(JSONObject(oldSettings).toString()))
+                old.version = 2
+            }
+            ExerciseReferenceStore(context, name).use { migrated ->
+                assertEquals("right", migrated.loadSettings()["injured_leg"])
+                assertEquals(zero, migrated.loadSettings()["heel_zero"])
+                assertEquals(mapOf("squat" to 10, "sit_to_stand" to 10), migrated.loadSettings()["rep_targets"])
+                assertTrue(migrated.loadSessions().isEmpty())
+                migrated.saveSettings(oldSettings + ("rep_targets" to mapOf("squat" to 20, "sit_to_stand" to 5)))
+                migrated.saveSettings(oldSettings + ("injured_leg" to "left"))
+                assertEquals(mapOf("squat" to 20, "sit_to_stand" to 5), migrated.loadSettings()["rep_targets"])
+                migrated.saveSession(session)
+                migrated.saveSession(session)
+                assertEquals(1, migrated.loadSessions().size)
+            }
+            ExerciseReferenceStore(context, name).use { reopened ->
+                assertEquals(session, reopened.loadSessions().single())
+                reopened.saveSession(ended)
+                reopened.saveSession(ended)
+                try {
+                    reopened.saveSession(ended + ("ended_at" to "invalid"))
+                    fail("Invalid session replacement accepted")
+                } catch (_: IllegalArgumentException) { }
+                assertEquals(ended, reopened.loadSessions().single())
+            }
+            ExerciseReferenceStore(context, name).use { reopened ->
+                assertEquals(ended, reopened.loadSessions().single())
+                assertEquals("left", reopened.loadSettings()["injured_leg"])
+                assertEquals(zero, reopened.loadSettings()["heel_zero"])
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
     fun testSettingsMigrationAndReopenPreserveExistingReference() {
         val name = "settings_migration_device_test.db"
         context.deleteDatabase(name)

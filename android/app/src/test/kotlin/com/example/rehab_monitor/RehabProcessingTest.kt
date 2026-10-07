@@ -189,6 +189,19 @@ class RehabProcessingTest {
         }
     }
 
+    @Test fun thigh_rep_targets_are_optional_and_require_whole_numbers() {
+        val reference = mapOf("exercise_id" to "squat", "measurement_version" to "thigh_tilt_v1",
+            "reference_peak_deg" to 60.0, "bend_threshold_deg" to 36.0, "upright_band_deg" to 9.0,
+            "placement" to "front_thigh", "recorded_at" to "2026-10-06T00:00:00Z")
+        val config = mapOf("exercise_id" to "squat", "reference" to reference)
+        fun command(target: Any?) = mapOf("action" to "thigh_session_begin", "config" to config + ("rep_target" to target))
+        assertEquals("thigh_session_begin", RehabProcessing.validateCommand(mapOf("action" to "thigh_session_begin", "config" to config)).first)
+        for (target in listOf(1, 1000)) assertEquals("thigh_session_begin", RehabProcessing.validateCommand(command(target)).first)
+        for (target in listOf(null, 0, 1001, true, 1.0, "2")) {
+            assertThrows(IllegalArgumentException::class.java) { RehabProcessing.validateCommand(command(target)) }
+        }
+    }
+
     @Test fun settings_validate_baselines_and_reject_invalid_replacements() {
         val zero = mapOf("version" to 1, "adc_max" to 1023,
             "left" to mapOf("baseline" to 12.0, "deadband" to 5.0),
