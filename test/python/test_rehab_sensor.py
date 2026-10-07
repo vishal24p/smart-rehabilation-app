@@ -55,10 +55,10 @@ class SensorParserTest(unittest.TestCase):
         rig.begin(recording=False)
         rig.ramp(60)
         rig.feed(60)
-        rig.ramp(0)
+        rig.ramp(15)
         self.assertEqual(rig.processor.repetitions, 0)
-        self.assertTrue(rig.processor.bend_confirmed)
-        self.assertIsNotNone(rig.processor.return_since)
+        self.assertGreaterEqual(rig.processor.cycle_peak, 60 - 1e-9)
+        self.assertIsNotNone(rig.processor.departure)
         parser = SensorParser()
         parser.processor.thigh = rig.processor
         parser.process_line(','.join(HEADER.split(',')[:13] + ['fsr_left', 'fsr_right']))
@@ -71,11 +71,13 @@ class SensorParserTest(unittest.TestCase):
         self.assertEqual(thigh['repetitions'], 0)
         self.assertIsNone(thigh['result'])
         self.assertIn('10 seconds', thigh['reason'])
-        self.assertIsNone(rig.processor.return_since)
+        self.assertIsNone(rig.processor.departure)
         self.assertIsNone(sample['thigh_accel'])
         self.assertIsNone(sample['thigh_gyro'])
         self.assertEqual(sample['shin_accel'], [0, 0, 16384])
         self.assertEqual((sample['fsr_left'], sample['fsr']), (800, 200))
+        self.assertEqual(rig.ramp(0)['repetitions'], 0)
+        self.assertEqual(rig.cycle()['repetitions'], 1)
 
     def test_named_dual_failed_shin_keeps_thigh_heels_and_recovers(self):
         parser = SensorParser()

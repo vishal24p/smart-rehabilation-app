@@ -74,7 +74,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
     final reference = ExerciseReference(
       exerciseId: _exerciseId,
       peakDeg: peak,
-      bendThresholdDeg: 0.6 * peak,
+      bendThresholdDeg: peak,
       uprightBandDeg: (0.15 * peak).clamp(5.0, 10.0),
       recordedAt: DateTime.now().toUtc().toIso8601String(),
     );
@@ -143,10 +143,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
               final live = _connection.status == WearableStatus.live;
               final available = _connection.latest?.thighAccel != null;
               final saved = _references[_exerciseId];
-              final finishReady =
-                  current?.recordedPeakDeg != null &&
-                  current?.tiltDeg != null &&
-                  current!.tiltDeg! <= 10;
+              final finishReady = current?.recordedPeakDeg != null;
               return ListView(
                 padding: const EdgeInsets.all(24),
                 children: [
@@ -229,10 +226,8 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                         liveRegion: true,
                         child: Text(
                           current?.recordedPeakDeg == null
-                              ? 'Zero set. Bend at least 30°, pause briefly, then return standing and hold still briefly.'
-                              : finishReady
-                              ? 'Movement captured. Ready to finish.'
-                              : 'Movement captured. Return standing.',
+                              ? 'Zero set. Perform one complete movement and return standing.'
+                              : 'Movement captured. Ready to finish.',
                         ),
                       ),
                     const SizedBox(height: 12),

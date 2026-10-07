@@ -54,6 +54,91 @@ class ThighRig:
 
 
 class ThighProcessorTest(unittest.TestCase):
+    def test_motion_without_trusted_gravity_keeps_visible_tilt(self):
+        for recording in (True, False):
+            rig = ThighRig()
+            rig.begin(recording)
+            for step in range(1, 81):
+                angle = min(60, step * 1.5)
+                sample = rig.sample(angle)
+                sample['thigh_accel'] = [value * 1.2 for value in sample['thigh_accel']]
+                result = rig.processor.process(sample)
+                self.assertIsNotNone(result['tilt_deg'])
+                self.assertAlmostEqual(result['tilt_deg'], angle, delta=0.01)
+                self.assertIsNone(result['reason'])
+
+    def test_reference_records_bend_return_without_minimum_depth_or_holds(self):
+        rig = ThighRig()
+        rig.begin()
+        rig.ramp(20, seconds=0.15)
+        result = rig.ramp(0, seconds=0.15)
+        self.assertAlmostEqual(result['recorded_peak_deg'], 20, delta=0.01)
+        rig.ramp(20)
+        self.assertEqual(rig.processor.command('thigh_reference_finish')['state'], 'reference_ready')
+
+    def test_session_requires_full_saved_depth_and_return_without_holds(self):
+        rig = ThighRig()
+        rig.begin(False)
+        self.assertEqual(rig.cycle(59)['repetitions'], 0)
+        rig.ramp(60, seconds=0.3)
+        self.assertEqual(rig.processor.snapshot()['repetitions'], 0)
+        result = rig.ramp(0, seconds=0.3)
+        self.assertEqual(result['repetitions'], 1)
+
+    def test_gap_and_missing_resume_visible_seated_pose_without_lost_rep(self):
+        for missing in (False, True):
+            rig = ThighRig()
+            rig.begin(False)
+            rig.ramp(60)
+            if missing:
+                sample = rig.sample(60)
+                sample['thigh_accel'] = sample['thigh_gyro'] = None
+                self.assertIsNone(rig.processor.process(sample)['tilt_deg'])
+            else:
+                rig.t += 2_000_000
+            result = rig.processor.process(rig.sample(60))
+            self.assertAlmostEqual(result['tilt_deg'], 60, delta=0.01)
+            self.assertIsNone(result['reason'])
+            self.assertEqual(rig.ramp(0)['repetitions'], 0)
+            self.assertEqual(rig.cycle()['repetitions'], 1)
+
+    def test_zero_acceleration_after_gap_waits_for_pose_and_cannot_extend_deadline(self):
+        for recover in (False, True):
+            rig = ThighRig()
+            rig.begin(False)
+            rig.ramp(60)
+            last_fresh = rig.processor.last_t
+            rig.t += 2_000_000
+            sample = rig.sample(60)
+            sample['thigh_accel'] = [0, 0, 0]
+            sample['thigh_gyro'] = [0, 1, 0]
+            result = rig.processor.process(sample)
+            self.assertEqual(result['state'], 'active')
+            self.assertIsNone(result['tilt_deg'])
+            self.assertIn('valid thigh acceleration', result['reason'])
+            self.assertEqual(rig.processor.last_t, last_fresh)
+            if recover:
+                result = rig.processor.process(rig.sample(60))
+                self.assertAlmostEqual(result['tilt_deg'], 60, delta=0.01)
+                self.assertIsNone(result['reason'])
+                self.assertEqual(rig.ramp(0)['repetitions'], 0)
+                self.assertEqual(rig.cycle()['repetitions'], 1)
+            else:
+                sample['time_us'] = last_fresh + 10_000_000
+                result = rig.processor.process(sample)
+                self.assertEqual(result['state'], 'interrupted')
+                self.assertEqual(result['result']['repetitions'], 0)
+
+    def test_contiguous_zero_acceleration_uses_calibrated_gyro(self):
+        rig = ThighRig()
+        rig.begin()
+        for step in range(1, 41):
+            sample = rig.sample(step)
+            sample['thigh_accel'] = [0, 0, 0]
+            result = rig.processor.process(sample)
+            self.assertAlmostEqual(result['tilt_deg'], step, delta=0.01)
+            self.assertIsNone(result['reason'])
+
     def test_gap_under_ten_seconds_recovers_all_modes(self):
         for parent in (False, True):
             for mode in ('zeroing', 'recording', 'active'):
@@ -68,7 +153,7 @@ class ThighProcessorTest(unittest.TestCase):
                         rig.feed(seconds=1 if mode == 'zeroing' else 3.1)
                         detector = rig.processor.thigh if parent else rig.processor
                         if mode == 'active':
-                            rig.cycle(50)
+                            rig.cycle(70)
                         completed = detector.repetitions
                         # Replace the next frame interval, not its elapsed arrival time.
                         rig.t = detector.last_t + gap_us
@@ -84,7 +169,7 @@ class ThighProcessorTest(unittest.TestCase):
                         else:
                             rig.feed(seconds=0.5)
                             self.assertIsNone(detector.reason)
-                            rig.cycle(50)
+                            rig.cycle(70)
                             if mode == 'active':
                                 self.assertEqual(detector.repetitions, completed + 1)
                             else:
@@ -99,7 +184,7 @@ class ThighProcessorTest(unittest.TestCase):
                     {'exercise_id': 'squat', 'reference': reference()})
                 rig.feed(seconds=1 if mode == 'zeroing' else 3.1)
                 if mode == 'active':
-                    rig.cycle(50)
+                    rig.cycle(70)
                 completed = rig.processor.repetitions
                 if mode != 'zeroing':
                     rig.ramp(45)
@@ -120,7 +205,7 @@ class ThighProcessorTest(unittest.TestCase):
                     self.assertIsNone(rig.processor.reason)
                     self.assertEqual(rig.processor.repetitions, completed)
                     self.assertIsNone(rig.processor.recorded_peak)
-                    rig.cycle(50)
+                    rig.cycle(70)
                     self.assertEqual(rig.processor.repetitions, completed + (mode == 'active'))
 
     def test_ten_second_loss_interrupts_and_keeps_completed_reps(self):
@@ -128,7 +213,7 @@ class ThighProcessorTest(unittest.TestCase):
             with self.subTest(missing=missing):
                 rig = ThighRig()
                 rig.begin(False)
-                rig.cycle(50)
+                rig.cycle(70)
                 duration = (rig.processor.last_t - rig.processor.active_start) / 1e6
                 sample = rig.sample()
                 sample['time_us'] = rig.processor.last_t + 10_000_000
@@ -166,46 +251,25 @@ class ThighProcessorTest(unittest.TestCase):
                 else:
                     self.assertEqual(result['repetitions'], 1)
 
-    def test_dynamic_gravity_uncertainty_recovers_without_recalibration(self):
+    def test_dynamic_gravity_does_not_pause_or_discard_contiguous_movement(self):
         for recording in (True, False):
-            with self.subTest(recording=recording):
-                rig = ThighRig()
-                rig.begin(recording)
-                if not recording:
-                    rig.cycle(50)
-                detector = rig.processor
-                zero, bias = list(detector.zero_gravity), list(detector.bias)
-                saved = dict(detector.reference) if detector.reference else None
-                completed = detector.repetitions
-                rig.ramp(40)
-                for _ in range(62):
-                    sample = rig.sample(40)
-                    sample['thigh_accel'] = [value*1.2 for value in sample['thigh_accel']]
-                    result = detector.process(sample)
-                self.assertEqual(result['state'], 'recording' if recording else 'active')
-                self.assertEqual(result['reason'], 'Stand upright and hold still to continue.')
-                self.assertTrue(detector.recovering_motion)
-                self.assertIsNone(result['tilt_deg'])
-                self.assertIsNone(result['result'])
-                self.assertIsNone(detector.departure)
-                self.assertEqual(detector.capture, [])
-                self.assertEqual(detector.zero_gravity, zero)
-                self.assertEqual(detector.bias, bias)
-                self.assertEqual(detector.reference, saved)
-                self.assertEqual(detector.repetitions, completed)
-                rig.ramp(0)
-                rig.feed(seconds=0.15)
-                self.assertTrue(detector.recovering_motion)
-                rig.feed(seconds=0.3)
-                self.assertFalse(detector.recovering_motion)
-                self.assertIsNone(detector.reason)
-                self.assertEqual(detector.repetitions, completed)
-                self.assertIsNone(detector.recorded_peak)
-                result = rig.cycle(50)
-                if recording:
-                    self.assertAlmostEqual(detector.recorded_peak, 50, delta=1)
-                else:
-                    self.assertEqual(result['repetitions'], completed+1)
+            rig = ThighRig()
+            rig.begin(recording)
+            zero, bias = list(rig.processor.zero_gravity), list(rig.processor.bias)
+            rig.ramp(70)
+            for _ in range(62):
+                sample = rig.sample(70)
+                sample['thigh_accel'] = [value * 1.2 for value in sample['thigh_accel']]
+                result = rig.processor.process(sample)
+                self.assertAlmostEqual(result['tilt_deg'], 70, delta=0.01)
+                self.assertIsNone(result['reason'])
+            result = rig.ramp(0)
+            self.assertEqual(rig.processor.zero_gravity, zero)
+            self.assertEqual(rig.processor.bias, bias)
+            if recording:
+                self.assertAlmostEqual(result['recorded_peak_deg'], 70, delta=0.01)
+            else:
+                self.assertEqual(result['repetitions'], 1)
 
     def test_451ms_gap_recovers_all_thigh_modes_without_lost_partial_rep(self):
         for parent in (False, True):
@@ -223,7 +287,7 @@ class ThighProcessorTest(unittest.TestCase):
                         rig.feed(seconds=1 if state == 'zeroing' else 3.1)
                         detector = rig.processor.thigh if parent else rig.processor
                         if state == 'active':
-                            rig.cycle(50)
+                            rig.cycle(70)
                         completed_reps = detector.repetitions
                         if state != 'zeroing':
                             rig.ramp(50)
@@ -232,8 +296,7 @@ class ThighProcessorTest(unittest.TestCase):
                         snapshot = rig.feed(0 if state == 'zeroing' else 50, seconds=0.05)
                         thigh = snapshot['thigh'] if parent else snapshot
                         self.assertEqual(thigh['state'], state)
-                        self.assertEqual(thigh['reason'], 'Stand still to continue.' if state == 'zeroing'
-                                         else 'Stand upright and hold still to continue.')
+                        self.assertIsNone(thigh['reason'])
                         self.assertIsNone(thigh['result'])
                         self.assertEqual(detector.repetitions, completed_reps)
                         if state == 'zeroing':
@@ -242,27 +305,27 @@ class ThighProcessorTest(unittest.TestCase):
                             thigh = snapshot['thigh'] if parent else snapshot
                             self.assertEqual(thigh['state'], 'recording')
                             continue
-                        self.assertIsNone(thigh['tilt_deg'])
+                        self.assertAlmostEqual(thigh['tilt_deg'], 50, delta=0.01)
                         self.assertIsNone(detector.departure)
                         # Eight degrees is within the reference recorder's band,
                         # but outside this active exercise's saved 5-degree band.
                         if state == 'active':
                             rig.ramp(8)
                             rig.feed(8, seconds=0.5)
-                            self.assertIsNone(detector.snapshot()['tilt_deg'])
+                            self.assertAlmostEqual(detector.snapshot()['tilt_deg'], 8, delta=0.1)
                             self.assertEqual(detector.reference, saved)
                             self.assertEqual(detector.rep_target, 3)
                         rig.ramp(0)
                         rig.feed(seconds=0.5)
                         self.assertEqual(detector.repetitions, completed_reps)
                         self.assertIsNone(detector.recorded_peak)
-                        rig.cycle(50)
+                        rig.cycle(70)
                         if state == 'recording':
-                            self.assertAlmostEqual(detector.recorded_peak, 50, delta=1)
+                            self.assertAlmostEqual(detector.recorded_peak, 70, delta=1)
                         else:
                             self.assertEqual(detector.repetitions, 2)
                             self.assertIsNone(detector.result)
-                            rig.cycle(50)
+                            rig.cycle(70)
                             self.assertEqual(detector.result['repetitions'], 3)
                             self.assertEqual(detector.result['outcome'], 'target_reached')
                             self.assertEqual(detector.result['active_s'],
@@ -277,10 +340,10 @@ class ThighProcessorTest(unittest.TestCase):
         snapshot = rig.processor.process(sample)
         self.assertEqual(snapshot['state'], 'active')
         self.assertIsNone(snapshot['result'])
-        self.assertIsNone(snapshot['tilt_deg'])
+        self.assertAlmostEqual(snapshot['tilt_deg'], 0)
         self.assertAlmostEqual(rig.processor.tilt, 0)
         rig.feed(seconds=0.5)
-        self.assertFalse(rig.processor.recovering_motion)
+        self.assertTrue(rig.processor.cycle_armed)
         self.assertEqual(rig.cycle()['repetitions'], 1)
 
     def test_fresh_thigh_begin_ignores_precommand_gap_or_reset(self):
@@ -316,7 +379,7 @@ class ThighProcessorTest(unittest.TestCase):
         rig.processor.command('thigh_session_begin',
                               {'exercise_id': 'squat', 'reference': reference(), 'rep_target': 10})
         rig.feed(seconds=3.1)
-        rig.cycle(50)
+        rig.cycle(70)
         duration = (rig.processor.thigh.last_t - rig.processor.thigh.active_start) / 1e6
         rig.t += 10_000_000
         snapshot = rig.processor.process(rig.sample())['thigh']
@@ -326,9 +389,9 @@ class ThighProcessorTest(unittest.TestCase):
         self.assertEqual(frozen['repetitions'], 1)
         self.assertEqual(frozen['outcome'], 'interrupted')
         self.assertEqual(frozen['active_s'], duration)
-        self.assertEqual(rig.cycle(50)['thigh']['result'], frozen)
+        self.assertEqual(rig.cycle(70)['thigh']['result'], frozen)
 
-    def test_reference_short_gap_recovers_only_after_stable_upright_new_cycle(self):
+    def test_reference_short_gap_shows_pose_and_requires_new_cycle(self):
         for exercise_id in ('squat', 'sit_to_stand'):
             for parent in (False, True):
                 with self.subTest(exercise_id=exercise_id, parent=parent):
@@ -346,7 +409,8 @@ class ThighProcessorTest(unittest.TestCase):
                     rig.t += 300_000
                     resumed = thigh(rig.feed(60, seconds=0.05))
                     self.assertEqual(resumed['state'], 'recording')
-                    self.assertEqual(resumed['reason'], 'Stand upright and hold still to continue.')
+                    self.assertIsNone(resumed['reason'])
+                    self.assertAlmostEqual(resumed['tilt_deg'], 60, delta=0.01)
                     self.assertIsNone(resumed['recorded_peak_deg'])
                     self.assertEqual(detector.zero_gravity, zero)
                     self.assertEqual(detector.bias, bias)
@@ -356,8 +420,8 @@ class ThighProcessorTest(unittest.TestCase):
                     rig.feed(seconds=0.5)
                     self.assertIsNone(thigh(rig.processor.snapshot())['recorded_peak_deg'])
                     self.assertIsNotNone(thigh(rig.processor.command('thigh_reference_finish'))['reason'])
-                    completed = thigh(rig.cycle(50))
-                    self.assertAlmostEqual(completed['recorded_peak_deg'], 50, delta=1)
+                    completed = thigh(rig.cycle(70))
+                    self.assertAlmostEqual(completed['recorded_peak_deg'], 70, delta=1)
                     self.assertEqual(thigh(rig.processor.command('thigh_reference_finish'))['state'], 'reference_ready')
 
     def test_reference_reset_long_gap_and_active_gap_still_interrupt(self):
@@ -371,7 +435,7 @@ class ThighProcessorTest(unittest.TestCase):
                     rig.processor.command(action, {'exercise_id': 'squat', 'reference': reference()})
                     rig.feed(seconds=3.1)
                     if failure == 'active':
-                        rig.cycle(50)
+                        rig.cycle(70)
                     sample = rig.sample()
                     sample['time_us'] = 1 if failure == 'reset' else sample['time_us'] + 10_000_000
                     snapshot = rig.processor.process(sample)
@@ -382,44 +446,34 @@ class ThighProcessorTest(unittest.TestCase):
                         self.assertEqual(result['result']['repetitions'], 1)
                         self.assertEqual(result['result']['outcome'], 'interrupted')
 
-    def test_reference_recovery_does_not_integrate_gap_or_accept_unstable_return(self):
+    def test_fresh_gap_pose_rearms_without_stillness_or_gyro_hold(self):
         rig = ThighRig()
         rig.begin()
-        rig.t += 950_000  # Exactly the existing one-second recovery boundary.
-        sample = rig.sample()
+        rig.ramp(60)
+        rig.t += 950_000
+        sample = rig.sample(60)
         sample['thigh_gyro'] = [0, 100, 0]
-        snapshot = rig.processor.process(sample)
-        self.assertEqual(snapshot['state'], 'recording')
-        self.assertIsNone(snapshot['tilt_deg'])
-        self.assertAlmostEqual(rig.processor.tilt, 0)
-        self.assertTrue(rig.processor.recovering_motion)
-        for _ in range(10):
-            sample = rig.sample()
-            sample['thigh_gyro'] = [0, 4, 0]
-            rig.processor.process(sample)
-        self.assertTrue(rig.processor.recovering_motion)
-        self.assertIsNone(rig.processor.snapshot()['recorded_peak_deg'])
-        rig.feed(seconds=0.2)
-        self.assertTrue(rig.processor.recovering_motion)
-        rig.feed(seconds=0.15)
-        self.assertFalse(rig.processor.recovering_motion)
-        self.assertIsNone(rig.processor.snapshot()['recorded_peak_deg'])
-        self.assertAlmostEqual(rig.cycle()['recorded_peak_deg'], 60, delta=1)
+        result = rig.processor.process(sample)
+        self.assertAlmostEqual(result['tilt_deg'], 60, delta=0.01)
+        self.assertFalse(rig.processor.cycle_armed)
+        self.assertIsNone(result['recorded_peak_deg'])
+        result = rig.ramp(0)
+        self.assertTrue(rig.processor.cycle_armed)
+        self.assertIsNone(result['recorded_peak_deg'])
+        self.assertAlmostEqual(rig.cycle()['recorded_peak_deg'], 60, delta=0.01)
 
-    def test_completed_reference_cannot_finish_during_gap_reacquisition(self):
-        rig = ThighRig()
-        rig.begin()
-        rig.cycle()
-        rig.t += 300_000
-        rig.feed(seconds=0.05)
-        snapshot = rig.processor.command('thigh_reference_finish')
-        self.assertEqual(snapshot['state'], 'recording')
-        self.assertIsNotNone(snapshot['reason'])
-        self.assertIsNotNone(snapshot['recorded_peak_deg'])
-        self.assertIsNone(snapshot['tilt_deg'])
-        rig.feed(seconds=0.3)
-        self.assertAlmostEqual(rig.processor.snapshot()['tilt_deg'], 0)
-        self.assertEqual(rig.processor.command('thigh_reference_finish')['state'], 'reference_ready')
+    def test_completed_reference_can_finish_after_gap_or_new_bend(self):
+        for gap in (False, True):
+            rig = ThighRig()
+            rig.begin()
+            rig.cycle()
+            rig.ramp(45)
+            if gap:
+                rig.t += 300_000
+                rig.feed(45, seconds=0.05)
+            result = rig.processor.command('thigh_reference_finish')
+            self.assertEqual(result['state'], 'reference_ready')
+            self.assertAlmostEqual(result['recorded_peak_deg'], 60, delta=0.01)
 
     def test_cancel_after_zero_finishes_preserves_active_result(self):
         for completed_rep in (False, True):
@@ -427,7 +481,7 @@ class ThighProcessorTest(unittest.TestCase):
                 rig = ThighRig()
                 rig.begin(False)
                 if completed_rep:
-                    rig.cycle(50)
+                    rig.cycle(70)
                 result = rig.processor.command('thigh_cancel')
                 self.assertEqual(result['state'], 'ended')
                 self.assertEqual(result['result']['outcome'], 'ended_early')
@@ -448,14 +502,14 @@ class ThighProcessorTest(unittest.TestCase):
         rig.feed(seconds=3.1)
         active_start = rig.processor.last_t - 50_000
         self.assertEqual(rig.cycle()['state'], 'active')
-        result = rig.cycle(50)
+        result = rig.cycle(70)
         self.assertEqual(result['state'], 'ended')
         frozen = result['result'].copy()
         self.assertEqual((frozen['repetitions'], frozen['rep_target'], frozen['outcome']),
                          (2, 2, 'target_reached'))
         self.assertAlmostEqual(frozen['active_s'], (rig.processor.last_t-active_start)/1e6)
-        self.assertAlmostEqual(frozen['latest_peak_deg'], 50, delta=1)
-        self.assertAlmostEqual(frozen['difference_deg'], -10, delta=1)
+        self.assertAlmostEqual(frozen['latest_peak_deg'], 70, delta=1)
+        self.assertAlmostEqual(frozen['difference_deg'], 10, delta=1)
         self.assertEqual(rig.cycle()['result'], frozen)
         self.assertEqual(rig.processor.interrupt('Disconnected')['result'], frozen)
 
@@ -464,14 +518,14 @@ class ThighProcessorTest(unittest.TestCase):
             with self.subTest(interrupted=interrupted):
                 rig = ThighRig()
                 rig.begin(False)
-                rig.cycle(50)
+                rig.cycle(70)
                 result = (rig.processor.interrupt('Disconnected') if interrupted
                           else rig.processor.command('thigh_session_end'))['result']
                 self.assertEqual(result['repetitions'], 1)
                 self.assertIsNone(result['rep_target'])
                 self.assertEqual(result['outcome'], 'interrupted' if interrupted else 'ended_early')
                 self.assertLess(result['active_s'], rig.t/1e6-2.9)
-                self.assertAlmostEqual(result['latest_peak_deg'], 50, delta=1)
+                self.assertAlmostEqual(result['latest_peak_deg'], 70, delta=1)
                 self.assertEqual(rig.processor.interrupt('Again')['result'], result)
         rig = ThighRig()
         rig.begin(False)
@@ -579,10 +633,10 @@ class ThighProcessorTest(unittest.TestCase):
         rig = ThighRig()
         self.assertEqual(rig.begin(False)['state'], 'active')
         self.assertEqual(rig.feed(0, seconds=0.5)['repetitions'], 0)
-        result = rig.cycle(50)
+        result = rig.cycle(70)
         self.assertEqual(result['repetitions'], 1)
-        self.assertAlmostEqual(result['latest_peak_deg'], 50, delta=1)
-        self.assertAlmostEqual(result['difference_deg'], -10, delta=1)
+        self.assertAlmostEqual(result['latest_peak_deg'], 70, delta=1)
+        self.assertAlmostEqual(result['difference_deg'], 10, delta=1)
         self.assertEqual(rig.feed(seconds=1)['repetitions'], 1)
         self.assertEqual(rig.cycle()['repetitions'], 2)
         self.assertEqual(rig.processor.command('thigh_session_end')['state'], 'ended')
@@ -640,7 +694,7 @@ class ThighProcessorTest(unittest.TestCase):
                 self.assertIsNone(result['tilt_deg'])
                 self.assertEqual(result['reference_peak_deg'], 60)
 
-    def test_genuine_sensor_faults_still_interrupt_during_motion_recovery(self):
+    def test_genuine_sensor_faults_still_interrupt_during_continuous_motion(self):
         for recording in (True, False):
             for failure in ('missing', 'nonfinite', 'clipped', 'reset', 'long_gap'):
                 with self.subTest(recording=recording, failure=failure):
@@ -650,7 +704,7 @@ class ThighProcessorTest(unittest.TestCase):
                         sample = rig.sample()
                         sample['thigh_accel'] = [0, 0, 1.2]
                         rig.processor.process(sample)
-                    self.assertTrue(rig.processor.recovering_motion)
+                    self.assertIsNotNone(rig.processor.snapshot()['tilt_deg'])
                     sample = rig.sample()
                     if failure == 'missing':
                         sample['thigh_accel'] = None
@@ -689,8 +743,8 @@ class ThighProcessorTest(unittest.TestCase):
             sample['thigh_accel'] = [0, 0, 0]
             result = rig.processor.process(sample)
         self.assertEqual(result['state'], 'active')
-        self.assertTrue(rig.processor.recovering_motion)
-        self.assertIsNone(result['tilt_deg'])
+        self.assertIsNotNone(rig.processor.snapshot()['tilt_deg'])
+        self.assertAlmostEqual(result['tilt_deg'], 0)
         result = rig.processor.command('thigh_cancel')
         self.assertEqual(result['state'], 'ended')
         self.assertEqual(result['result']['outcome'], 'ended_early')

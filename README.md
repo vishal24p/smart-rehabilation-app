@@ -14,8 +14,8 @@ estimates, not clinical accuracy, diagnosis or recovery scores.
    Stand still during the large **3 → 2 → 1** session-zero countdown. It completes
    only after three seconds and at least 60 stable samples; motion resets it.
 3. Perform one complete movement and return standing, then **Finish recording**.
-   A clear excursion of at least 30° with a brief lowered hold and return is an
-   engineering capture requirement, not a prescribed clinical exercise target.
+   Move beyond the standing tolerance and return; there is no minimum depth,
+   movement duration or hold requirement.
 4. Review the measured thigh range and **Save reference**. Each exercise is saved
    locally in SQLite and survives app restart. **Re-record reference** replaces
    it only after another successful save; cancellation retains the previous one.
@@ -25,7 +25,8 @@ estimates, not clinical accuracy, diagnosis or recovery scores.
 6. On **Home**, tap **Start session**, choose an exercise, connect, then tap
    **Start exercise**. The saved reference loads automatically. Stand still for
    the session-zero countdown, then exercise. Completed upright-lowered-upright
-   cycles show peak thigh tilt and difference from the saved reference.
+   cycles count only when they reach the saved depth and return. They show peak
+   thigh tilt and difference from the saved reference.
 7. Reaching the repetition target automatically ends the exercise. **End exercise**
    saves completed repetitions with an ended-early outcome; partial cycles do not
    count. After saving, **Return to session** lets you repeat or choose another
@@ -44,13 +45,13 @@ Inclination includes lateral tilt. Use consistent placement on the front thigh.
 Reference and exercise routes use ±2g/±250°/s, matching the supplied ESP8266 firmware.
 Each new capture starts its own sample clock. A gap before tapping Record or Start
 does not interrupt the new capture. Gaps shorter than ten seconds discard the partial
-repetition and pause counting until you return upright and hold still, then resume
-automatically with completed repetitions preserved. During standing zero, these
+repetition. Fresh readings show the current angle immediately; return standing
+to start a new complete repetition. Completed repetitions are preserved. During standing zero, these
 gaps restart the countdown automatically. Missing thigh readings wait for fresh
 values for up to ten seconds, without counting movements during the loss.
 Ten seconds without fresh readings or a disconnect interrupts the attempt and
-requires a fresh zero. Completed repetitions remain saved. A complete bend and
-upright return need their brief holds, with no fixed one-second movement minimum.
+requires a fresh zero. Completed repetitions remain saved. Readings stay visible
+during movement; no bend or return holds are required.
 
 ## Phone setup
 
@@ -140,8 +141,9 @@ for about 2.7 seconds. This setting does not apply to ESP32 firmware.
 
 For a Register/exercise interruption, Android debug builds log bounded diagnostics
 under `RehabWearable`. Device timestamp gaps, rejected CSV row counts, arrival/parse
-timing, socket failures, and explicit lifecycle stops are logged without raw motion
-or heel readings. These distinguish a sender pause from parser rejection or a
+timing, socket failures, and explicit lifecycle stops are logged. State/reason
+changes also log thigh acceleration, gyro and tilt to explain sensor faults.
+These distinguish a sender pause from parser rejection or a
 connection stop. Release builds omit these diagnostics. Inspect them with
 `adb logcat -s RehabWearable:D '*:S'` while reproducing the issue.
 
@@ -215,10 +217,11 @@ no valid sample clears readings. Foreground retries use 1, 2, then 5-second dela
 Timestamp restart clears graph history; Disconnect cancels retries/resources.
 Timestamp rollback, repeated headers, TCP retry or a device gap over 250 ms also
 invalidates two-IMU calibration. Thigh reference recording and exercises recover
-from gaps over 250 ms and shorter than ten seconds after returning upright and
-holding still; the interrupted movement is discarded. Timestamp resets and
+from gaps over 250 ms and shorter than ten seconds with fresh readings visible
+immediately; the interrupted movement is discarded and standing re-arms counting. Timestamp resets and
 gaps of ten seconds or more interrupt. IMU clipping stops motion analytics;
-temporary gravity uncertainty pauses thigh counting until stable upright readings return.
+Temporary acceleration changes during movement do not hide thigh tilt; gyro
+integration continues while acceleration is unsuitable for correcting the estimate.
 Unavailable current metrics display an em dash; a frozen summary stays separate.
 The screen stays awake while the wearable connection is active; disconnect clears it.
 

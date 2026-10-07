@@ -85,7 +85,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
             val reason = if (thigh.isNull("reason")) "none" else thigh.optString("reason")
             val current = state to reason
             if (current != thighDiagnostic) {
-                diagnostic("thigh_transition previous=${thighDiagnostic?.first} state=$state reason=$reason device_us=$deviceTime device_gap_us=$gap zero_progress=${thigh.optDouble("zero_progress")} repetitions=${thigh.optInt("repetitions")}")
+                diagnostic("thigh_transition previous=${thighDiagnostic?.first} state=$state reason=$reason device_us=$deviceTime device_gap_us=$gap zero_progress=${thigh.optDouble("zero_progress")} repetitions=${thigh.optInt("repetitions")} tilt_deg=${thigh.opt("tilt_deg")} accel=${json.opt("thigh_accel")} gyro=${json.opt("thigh_gyro")} scaled=${json.opt("scaled")}")
                 thighDiagnostic = current
             }
         }

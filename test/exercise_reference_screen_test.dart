@@ -166,7 +166,7 @@ void main() {
       saveFails = false;
       await tap(tester, 'Save reference');
       expect(records.single['reference_peak_deg'], 60);
-      expect(records.single['bend_threshold_deg'], 36);
+      expect(records.single['bend_threshold_deg'], 60);
       expect(records.single['upright_band_deg'], 9);
       expect(find.text('Reference saved'), findsOneWidget);
     },
@@ -180,8 +180,7 @@ void main() {
       await snapshot(tester, 'zeroing', progress: .8);
       await tester.pumpAndSettle();
       expect(find.text('1'), findsOneWidget);
-      const reason =
-          'Readings paused; return upright and hold still to continue.';
+      const reason = 'Readings paused; waiting for fresh readings.';
       await snapshot(tester, 'zeroing', reason: reason);
       await tester.pumpAndSettle();
       expect(find.text('3'), findsOneWidget);
@@ -199,11 +198,11 @@ void main() {
       expect(find.text('Finish recording'), findsOneWidget);
       await snapshot(tester, 'recording', reason: reason);
       expect(find.text(reason), findsOneWidget);
-      expect(find.textContaining('Zero set. Bend'), findsNothing);
+      expect(find.textContaining('Zero set. Perform'), findsNothing);
       expect(find.text('Re-record reference'), findsNothing);
       await snapshot(tester, 'recording', tilt: 0);
       expect(find.text(reason), findsNothing);
-      expect(find.textContaining('Zero set. Bend'), findsOneWidget);
+      expect(find.textContaining('Zero set. Perform'), findsOneWidget);
       expect(connection.thigh!.state, 'recording');
       expect(connection.status, WearableStatus.live);
       expect(records.single['reference_peak_deg'], 45);
@@ -319,7 +318,7 @@ void main() {
         repetitions: 1,
       );
       expect(find.text('Zero set. Begin your exercise.'), findsOneWidget);
-      const recovery = 'Stand upright and hold still to continue.';
+      const recovery = 'Readings paused; waiting for fresh readings.';
       await snapshot(tester, 'active', reason: recovery, repetitions: 1);
       expect(find.text(recovery), findsOneWidget);
       expect(find.text('Zero set. Begin your exercise.'), findsNothing);
@@ -366,7 +365,7 @@ void main() {
       expect(find.text('Captured range: —'), findsOneWidget);
       expect(
         find.text(
-          'Zero set. Bend at least 30°, pause briefly, then return standing and hold still briefly.',
+          'Zero set. Perform one complete movement and return standing.',
         ),
         findsOneWidget,
       );
@@ -382,8 +381,17 @@ void main() {
         peak: 50,
       );
       expect(find.text('Captured range: 50.0°'), findsOneWidget);
-      expect(find.text('Movement captured. Return standing.'), findsOneWidget);
-      expect(finish().onPressed, isNull);
+      expect(find.text('Movement captured. Ready to finish.'), findsOneWidget);
+      expect(finish().onPressed, isNotNull);
+      await snapshot(
+        tester,
+        'recording',
+        exerciseId: exerciseId,
+        tilt: 40,
+        peak: 50,
+      );
+      expect(find.text('Thigh tilt: 40.0°'), findsOneWidget);
+      expect(finish().onPressed, isNotNull);
       await snapshot(
         tester,
         'recording',
@@ -394,7 +402,7 @@ void main() {
       expect(find.text('Movement captured. Ready to finish.'), findsOneWidget);
       expect(finish().onPressed, isNotNull);
       await snapshot(tester, 'recording', exerciseId: exerciseId, peak: 50);
-      expect(finish().onPressed, isNull);
+      expect(finish().onPressed, isNotNull);
       await snapshot(
         tester,
         'recording',

@@ -73,6 +73,7 @@ class WearableRecoveryDeviceTest : ActivityInstrumentationTestCase2<MainActivity
                 assertTrue(lines.any { it.contains("available=false device_us=60000 device_gap_us=20000") })
                 assertTrue(lines.any { it.contains("reason=Waiting for thigh readings.") && it.contains("repetitions=2") })
                 assertTrue(lines.filter { it.contains("thigh_transition ") }.all { it.contains("zero_progress=1.0") })
+                assertTrue(lines.any { it.contains("accel=[0,0,1] gyro=[0,0,0]") })
                 assertFalse(lines.any { it.contains("thigh_accel") || it.contains("thigh_gyro") })
             }
         } finally {

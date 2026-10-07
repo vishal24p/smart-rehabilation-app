@@ -18,7 +18,7 @@
 - Keep Android Wi-Fi approval requests open instead of cancelling after 20 seconds; stop repeated prompts after failure and reuse an already joined wearable network.
 - Limit I2C clock-stretch waits in the supplied ESP8266 firmware to reduce multi-second streaming stalls when the MPU bus fails.
 - Wait up to ten seconds for fresh thigh readings during registration and exercises, preserving completed repetitions and discarding partial movements; restart standing-zero countdowns without another tap.
-- Allow complete bend-and-return movements without a fixed one-second duration requirement; retain brief bend and upright holds and sensor-quality checks.
+- Keep thigh readings visible during movement; remove movement holds, duration requirements and the fixed 30-degree registration minimum. Count sessions only after reaching the full saved depth and returning standing.
 - Retry interrupted standing zero on the same exercise page and expose disconnect controls during live registration.
 - Start reference recording and exercises without inheriting sample gaps from before the new capture; longer gaps still freeze completed results safely.
 - Correct left/right heel mapping and preserve compatibility with existing sensor headers.
@@ -28,5 +28,5 @@
 ### Verification
 - Save bounded phone-local debug logs for Wi-Fi joining, authentication, IP setup, TCP connection and app disconnects.
 - Add local Android debug diagnostics for sample timing, rejected rows, socket failures and lifecycle stops.
-- Log missing/restored thigh readings, processor state/reason transitions and session command timing in the bounded phone-local log.
+- Log missing/restored thigh readings, processor state/reason transitions with thigh vectors and tilt, and session command timing in the bounded phone-local log.
 - Expand automated checks for sensor processing, reference recovery, target results, persistence and workout lifecycle behavior.
