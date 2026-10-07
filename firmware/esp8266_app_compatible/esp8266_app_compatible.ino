@@ -301,6 +301,8 @@ void setup() {
   );
 
   Wire.setClock(100000);
+  // Bound each SCL wait to 1 ms when the MPU bus holds the clock low.
+  Wire.setClockStretchLimit(1000);
 
   // ===================================================
   // MPU INITIALIZATION

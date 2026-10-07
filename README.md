@@ -14,8 +14,8 @@ estimates, not clinical accuracy, diagnosis or recovery scores.
    Stand still during the large **3 → 2 → 1** session-zero countdown. It completes
    only after three seconds and at least 60 stable samples; motion resets it.
 3. Perform one complete movement and return standing, then **Finish recording**.
-   A clear excursion of at least 30° with a brief lowered hold and return is an
-   engineering capture requirement, not a prescribed clinical exercise target.
+   Move beyond the standing tolerance and return; there is no minimum depth,
+   movement duration or hold requirement.
 4. Review the measured thigh range and **Save reference**. Each exercise is saved
    locally in SQLite and survives app restart. **Re-record reference** replaces
    it only after another successful save; cancellation retains the previous one.
@@ -25,7 +25,9 @@ estimates, not clinical accuracy, diagnosis or recovery scores.
 6. On **Home**, tap **Start session**, choose an exercise, connect, then tap
    **Start exercise**. The saved reference loads automatically. Stand still for
    the session-zero countdown, then exercise. Completed upright-lowered-upright
-   cycles show peak thigh tilt and difference from the saved reference.
+   cycles count only when they reach the saved depth and return. They show peak
+   thigh tilt and difference from the saved reference. Depth comparisons use the
+   same one-decimal precision shown on screen.
 7. Reaching the repetition target automatically ends the exercise. **End exercise**
    saves completed repetitions with an ended-early outcome; partial cycles do not
    count. After saving, **Return to session** lets you repeat or choose another
@@ -43,17 +45,29 @@ from sit-to-stand, confirm chair contact, measure knee angle, or certify form.
 Inclination includes lateral tilt. Use consistent placement on the front thigh.
 Reference and exercise routes use ±2g/±250°/s, matching the supplied ESP8266 firmware.
 Each new capture starts its own sample clock. A gap before tapping Record or Start
-does not interrupt the new capture. Actual gaps during an exercise still interrupt
-counting and preserve completed repetitions; starting again requires a fresh zero.
+does not interrupt the new capture. Gaps shorter than ten seconds retain a movement
+that already reached the saved depth; the next valid standing reading completes it
+once. Movements that had not reached the depth are discarded. Fresh readings show
+the current angle immediately. Completed repetitions are preserved. During standing zero, these
+gaps restart the countdown automatically. Missing thigh readings wait for fresh
+values for up to ten seconds, without counting movements during the loss. Reference
+recording retains an observed bend until fresh readings confirm the standing return.
+Ten seconds without fresh readings or a disconnect interrupts the attempt and
+requires a fresh zero. Completed repetitions remain saved. Readings stay visible
+during movement; no bend or return holds are required.
 
 ## Phone setup
 
 1. Install the Android app using `flutter run` or the built debug APK.
 2. Power the wearable. Open **Sensors** and tap **Connect wearable**.
-3. Accept Android permission/Wi-Fi prompts. Expected Wi-Fi: `REHAB-WEARABLE`,
+3. Accept Android permission/Wi-Fi prompts. Expected Wi-Fi: `REHAB`,
    password `rehab1234`. It provides no internet; stay connected to it.
    On older Android versions, join through **Open Wi-Fi settings**, return and
    connect again.
+   If already joined to that network, the app uses the existing Wi-Fi connection.
+   The Android approval prompt has no app-imposed 20-second deadline. If the
+   request is declined or fails, retry explicitly or open Wi-Fi settings; the app
+   does not repeatedly reopen the prompt.
 4. Expand **Sensor details**. Move thigh/shin sensors and press each heel sensor;
    verify the correct physical side's readings change.
 5. In **Settings**, connect and tap **Capture unloaded sensors** with both heels
@@ -119,11 +133,28 @@ time_us,thigh_ax,thigh_ay,thigh_az,thigh_gx,thigh_gy,thigh_gz,shin_ax,shin_ay,sh
 
 Thigh MPU6050: `0x69`; shin: `0x68`. Timestamp is unsigned 32-bit microseconds,
 motion values signed 16-bit counts, and the parser accepts heel ADC 0..4095 for
-legacy ESP32 streams. CRLF is accepted. The supplied sketches in
-`firmware/esp8266_app_compatible/` and `firmware/mpu_axis_capture/` target ESP8266:
+legacy ESP32 streams. CRLF is accepted. The app-compatible sketch in
+`firmware/esp8266_app_compatible/` targets ESP8266:
 I2C SDA/SCL are GPIO4/5, heel-select outputs GPIO14/12, and shared ADC A0 is 0..1023.
-They send the named dual-heel format below; legacy ESP32 GPIO34/35 wiring is separate.
+It sends the named dual-heel format below; legacy ESP32 GPIO34/35 wiring is separate.
 Verify the actual firmware/header and MPU configuration before physical-unit use.
+The supplied ESP8266 sketches limit I2C clock stretching to 1 ms per bit. This
+reduces a stuck-clock failure path that otherwise can pause the two MPU reads
+for about 2.7 seconds. This setting does not apply to ESP32 firmware.
+
+`firmware/mpu_axis_capture/` is a separate standalone HTTP dashboard on port 80,
+with its own calibration, exercise controls and reports. It does not provide the
+TCP CSV stream required by the Android app. Use the app-compatible sender for
+Android sessions; keeping this HTTP sketch does not change the app protocol.
+
+For a Register/exercise interruption, Android debug builds log bounded diagnostics
+under `RehabWearable`. Device timestamp gaps, rejected CSV row counts, arrival/parse
+timing, socket failures, and explicit lifecycle stops are logged. State/reason
+changes also log thigh acceleration, gyro and tilt to explain sensor faults.
+Repetition-phase logs show depth reached, standing return, movement peak and count.
+These distinguish a sender pause from parser rejection or a
+connection stop. Release builds omit these diagnostics. Inspect them with
+`adb logcat -s RehabWearable:D '*:S'` while reproducing the issue.
 
 ### Two heel sensors
 
@@ -156,8 +187,8 @@ Thigh-only streams keep heel capture/comparison active, but display shin reading
 and knee metrics as unavailable. Existing shin-enabled streams retain their
 normal calibration and session flow. Named-header streams treat six-zero failed
 IMU reads as unavailable data for the affected board, preserving heel readings.
-A failed thigh read interrupts exercise counting and cannot complete a repetition
-from frozen tilt. Legacy headers keep their existing interpretation. Restoring
+A failed thigh read pauses exercise counting for up to ten seconds and cannot
+complete a repetition from frozen tilt. Legacy headers keep their interpretation. Restoring
 both IMUs requires fresh motion calibration.
 
 For optional legacy heel-contact calibration in **Sensors → Calibration & setup**,
@@ -166,8 +197,9 @@ for two seconds each. Heel capture does not require IMU axes or weight input.
 Python determines each channel's unloaded median, noise and loaded polarity.
 It computes `signal = max(0, (ADC - unloaded_baseline) * polarity)`, discarding
 signals within `max(5 ADC, 3 * calibration noise)` of zero. Left/right shares
-are `100 * signal / (left_signal + right_signal)` and total 100%; the display
-rounds one side and uses its complement for the other.
+are computed internally for comparison. The main display shows only **Left leg more**,
+**Right leg more**, or **Same** when the two signals differ by at most 10% of the
+larger signal. Missing or ineffective readings do not display Same.
 
 These are **relative heel ADC signal shares**, not calibrated force, pressure,
 body-weight distribution, or whole-leg loading. FSR response is nonlinear; equal
@@ -190,14 +222,20 @@ supplied wearable. Legacy parser acceptance up to 4095 does not change that rang
 Android 10–12 request Location permission (precise on Android 12); Android 13+ use
 Nearby Wi-Fi devices. No Wi-Fi scanning or location recording. Older phones may
 require Location services. Errors offer retry/settings. TCP uses selected Wi-Fi
-even when cellular is enabled. Live requires a valid sample; three seconds with
+even when cellular is enabled. Live requires a valid sample; ten seconds with
 no valid sample clears readings. Foreground retries use 1, 2, then 5-second delays.
 Timestamp restart clears graph history; Disconnect cancels retries/resources.
 Timestamp rollback, repeated headers, TCP retry or a device gap over 250 ms also
-invalidates calibration. During reference recording only, a gap over 250 ms and
-up to one second permits recovery after returning upright and holding still;
-the interrupted movement is discarded. Active exercises, timestamp resets, and
-longer gaps interrupt. IMU clipping or unreliable motion stops motion analytics.
+invalidates two-IMU calibration. Thigh reference recording and exercises recover
+from gaps over 250 ms and shorter than ten seconds with fresh readings visible
+immediately; observed full depth is retained until a valid standing return. Other
+partial movements are discarded and standing re-arms counting. Timestamp resets and
+gaps of ten seconds or more interrupt. Gyro clipping interrupts thigh analytics;
+acceleration-only clipping during continuous movement skips accelerometer correction
+and keeps the gyro estimate. A new zero requires unsaturated readings, and recovery
+after a gap waits for unsaturated acceleration to establish the current pose.
+Temporary acceleration changes during movement do not hide thigh tilt; gyro
+integration continues while acceleration is unsuitable for correcting the estimate.
 Unavailable current metrics display an em dash; a frozen summary stays separate.
 The screen stays awake while the wearable connection is active; disconnect clears it.
 
@@ -228,6 +266,14 @@ with increasing/decreasing ADC, reference angle differences, automatic target
 completion, save retries, history after restart, and failed IMU reads. Automated checks
 and APK builds do not establish hardware correctness or clinical accuracy.
 
+Debug builds save Wi-Fi request, handshake/authentication, IP, TCP and lifecycle
+diagnostics in the phone's private `files/wearable-connection.log`, rotated at
+64 KiB. They also appear under the `RehabWearable` logcat tag. No passwords or
+raw sensor readings are recorded. With USB debugging connected, retrieve the file
+with `adb shell run-as com.example.rehab_monitor cat files/wearable-connection.log`.
+Android may expose only a generic connection failure; compare these timestamps
+with Android Wi-Fi system logs for association rejection details.
+
 Live UI: `lib/live_sensor_screen.dart`; channel state: `lib/wearable_connection.dart`.
 Calibration/session panel: `lib/rehab_session_panel.dart`.
 Thigh references/session controls: `lib/exercise_reference_screen.dart`,
@@ -240,3 +286,54 @@ in that Android folder.
 Python parser: `android/app/src/main/python/rehab_sensor.py`;
 calculations/session state: `android/app/src/main/python/rehab_session.py` and
 `android/app/src/main/python/thigh_session.py`.
+
+## Gait demonstration
+
+Open **Home → Gait analysis** in the Android app. The wearable must stream
+both MPU6050s (right thigh and right shin) plus the two forefoot FSRs (one under the ball of each foot) over the existing
+Wi-Fi connection. No trained model is required. The ESP8266 firmware must preserve the existing CSV and 0..4095 FSR signal contract.
+
+1. Connect and verify both IMUs use ±2g and ±250°/s. Select each signed hinge axis
+   and confirm right-leg mounting. Load each forefoot separately to verify the app's
+   left/right labels. The parser retains the previous side swap: match readings to physical sensors before confirming setup.
+2. Confirm gait setup, capture both unloaded forefeet, capture both loaded forefeet,
+   then complete standing calibration. Calibration never starts walking automatically.
+3. Enter the measured path distance and press **Start baseline walk**. Walk the path
+   and press **Stop walk** at its end. Complete at least ten same-foot stride intervals
+   on each side. Preview and explicitly save the baseline; replacing it requires an
+   explicit save. Failed captures or saves retain the previous reference.
+4. Enter the comparison path distance and press **Start comparison walk**, then
+   manually stop. Keep mounting and walking conditions consistent with the baseline.
+
+The app shows step counts, cadence, mean step/stride times, timing asymmetry,
+forefoot-loaded/unloaded duration proxies, right-leg angular excursion, trial average
+speed and approximate average step/stride lengths. Average speed includes pauses;
+lengths are distance/count estimates, with start/stop boundary error, not per-foot
+spatial measurements. Timing uses local forefoot loading events, not heel strikes. Forefoot unloading is not verified toe-off: true stance, swing and double
+support remain unavailable. Angular excursion is not a validated anatomical knee angle.
+
+Comparison uses cadence and mean left/right step and stride times. A deviation
+strictly greater than the editable tolerance (20% by default) gives **Outside reference**
+and names the triggering metric. Otherwise a usable comparison gives **Within reference**.
+Short, interrupted, malformed or unreliable trials give **Insufficient data** and
+cannot replace a baseline. A recorded baseline is not proof of healthy gait; these
+rules are demonstration settings, not normal/abnormal medical classification.
+
+Forefoot baselines use `gait_forefoot_timing_v1` and `right_thigh_shin_bilateral_forefeet`. Saved heel baselines are ignored without deletion; record a new baseline after moving sensors. An explicit successful save replaces the old singleton.
+
+One baseline persists locally in the existing Android reference database. Version 4
+adds missing gait, settings and workout tables while preserving data from version 1,
+both version-2 branch schemas and version 3. Automated synthetic
+tests verify calculations and recovery, but real walking accuracy still needs video-
+annotated recordings and physical validation.
+
+Gait calculations: `android/app/src/main/python/gait_session.py`; DTO/store:
+`lib/gait_analysis.dart`; trial UI: `lib/gait_session_panel.dart`.
+
+### ESP8266 shared-A0 integration
+
+The supplied firmware drives both FSR GPIOs as outputs, holding the inactive FSR LOW. With the shared-A0 wiring, that inactive FSR becomes an extra pressure-dependent path to ground and changes the selected sensor reading. The inactive pin must be high impedance (INPUT with no pull-up); only the selected pin drives HIGH. This is an engineering analysis of the supplied circuit, not a verified hardware result.
+
+The ESP8266 core may cache ADC results for at least 5 ms while Wi-Fi runs. The supplied 100-microsecond separation cannot ensure independent readings; allow more than 5 ms after selecting each sensor and physically verify separate responses. Its 10-bit readings must be normalized from 0..1023 to 0..4095 to preserve the app's saturation contract. Do not confirm FSR setup until this is done. The app's legacy parser swaps FSR sides: compensate the transmitted column order or physically verify the resulting labels before calibration.
+
+The user confirmed a bare ESP-12E module. Its ADC accepts 0..1 V and has no NodeMCU board divider. Do not use the pictured shared-A0 wiring as drawn: the selected 3.3 V GPIO can exceed the ADC limit. Add a suitable ADC protection divider before connecting A0; firmware timing and separate sensor response still require physical verification. [ESP8266 Arduino Core reference](https://arduino-esp8266.readthedocs.io/en/latest/reference.html#analog-input).

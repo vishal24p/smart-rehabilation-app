@@ -22,15 +22,19 @@ class MainActivity : FlutterActivity() {
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, "rehab/wearable/events")
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) { sink = events }
-                override fun onCancel(arguments: Any?) { wearable.disconnect(); sink = null }
+                override fun onCancel(arguments: Any?) { wearable.disconnect("event_cancel"); sink = null }
             })
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "rehab/wearable")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "getExerciseReferences", "saveExerciseReference" -> referenceWorker.execute {
+                    "getExerciseReferences", "saveExerciseReference", "getGaitReference", "saveGaitReference" -> referenceWorker.execute {
                         val response = runCatching {
-                            if (call.method == "getExerciseReferences") references.load()
-                            else references.save(call.arguments)
+                            when (call.method) {
+                                "getExerciseReferences" -> references.load()
+                                "saveExerciseReference" -> references.save(call.arguments)
+                                "getGaitReference" -> references.loadGait()
+                                else -> references.saveGait(call.arguments)
+                            }
                         }
                         runOnUiThread {
                             response.fold(
@@ -93,9 +97,9 @@ class MainActivity : FlutterActivity() {
         if (requestCode == WearableConnection.PERMISSION_REQUEST && ::wearable.isInitialized) wearable.permissionResult()
     }
 
-    override fun onStop() { if (::wearable.isInitialized) wearable.disconnect(); super.onStop() }
+    override fun onStop() { if (::wearable.isInitialized) wearable.disconnect("onStop"); super.onStop() }
     override fun onDestroy() {
-        if (::wearable.isInitialized) wearable.disconnect()
+        if (::wearable.isInitialized) wearable.disconnect("onDestroy")
         referenceWorker.execute { if (::references.isInitialized) references.close() }
         referenceWorker.shutdown()
         sink = null

@@ -4,19 +4,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_monitor/main.dart';
 import 'package:rehab_monitor/live_sensor_screen.dart';
 import 'package:rehab_monitor/exercise_reference_screen.dart';
+import 'package:rehab_monitor/gait_session_panel.dart';
 
 void main() {
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          const MethodChannel('rehab/wearable'),
-          (call) async {
- if (call.method == 'getExerciseReferences' || call.method == 'getWorkoutSessions') return [];
- if (call.method == 'getSettings') return {'injured_leg': null, 'heel_zero': null};
- if (call.method == 'saveWorkoutSession') return call.arguments;
- return null;
- },
-        );
+        .setMockMethodCallHandler(const MethodChannel('rehab/wearable'), (
+          call,
+        ) async {
+          if (call.method == 'getExerciseReferences' ||
+              call.method == 'getWorkoutSessions') {
+            return [];
+          }
+          if (call.method == 'getSettings') {
+            return {'injured_leg': null, 'heel_zero': null};
+          }
+          if (call.method == 'saveWorkoutSession') return call.arguments;
+          return null;
+        });
   });
   testWidgets('home starts sessions without fabricated results', (
     tester,
@@ -30,6 +35,38 @@ void main() {
     expect(find.textContaining('correct reps'), findsNothing);
     expect(find.text('Today’s progress'), findsNothing);
     expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+  testWidgets('home opens gait separately without creating a workout', (
+    tester,
+  ) async {
+    var workoutSaves = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('rehab/wearable'), (
+          call,
+        ) async {
+          if (call.method == 'getWorkoutSessions') return [];
+          if (call.method == 'getSettings') {
+            return {'injured_leg': null, 'heel_zero': null};
+          }
+          if (call.method == 'saveWorkoutSession') workoutSaves++;
+          return null;
+        });
+    await tester.pumpWidget(const MyApp());
+    await tester.pumpAndSettle();
+    expect(find.text('Start session'), findsOneWidget);
+    await tester.tap(find.text('Gait analysis'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<LiveSensorScreen>(find.byType(LiveSensorScreen)).exerciseId,
+      'gait',
+    );
+    expect(find.byType(GaitSessionPanel), findsOneWidget);
+    expect(find.text('Heel pressure'), findsNothing);
+    expect(workoutSaves, 0);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.text('Start session'), findsOneWidget);
+    expect(workoutSaves, 0);
   });
   for (final entry in {
     'Squat': 'squat',

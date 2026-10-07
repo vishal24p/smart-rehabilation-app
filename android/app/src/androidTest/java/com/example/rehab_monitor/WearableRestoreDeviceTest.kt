@@ -3,6 +3,12 @@ package com.example.rehab_monitor
 import android.test.AndroidTestCase
 import android.test.ActivityInstrumentationTestCase2
 import android.view.WindowManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.LinkProperties
+import android.os.Parcel
+import java.io.File
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
@@ -39,6 +45,171 @@ class WearableRestoreDeviceTest : AndroidTestCase() {
 
 @Suppress("DEPRECATION")
 class WearableRecoveryDeviceTest : ActivityInstrumentationTestCase2<MainActivity>(MainActivity::class.java) {
+    fun testThighDiagnosticsOnlyLogAvailabilityAndStateChanges() {
+        val screen = activity
+        val file = File(screen.filesDir, "wearable-connection.log")
+        val saved = if (file.exists()) file.readBytes() else null
+        val trace = WearableConnection::class.java.getDeclaredMethod("traceThigh", String::class.java,
+            Boolean::class.javaPrimitiveType).apply { isAccessible = true }
+        try {
+            instrumentation.runOnMainSync {
+                val connection = WearableConnection(screen) {}
+                file.writeText("")
+                fun sample(time: Long, available: Boolean, reason: String? = null) = JSONObject()
+                    .put("time_us", time)
+                    .put("thigh_accel", if (available) org.json.JSONArray(listOf(0, 0, 1)) else JSONObject.NULL)
+                    .put("thigh_gyro", if (available) org.json.JSONArray(listOf(0, 0, 0)) else JSONObject.NULL)
+                    .put("analytics", JSONObject().put("thigh", JSONObject()
+                        .put("state", "active").put("reason", reason ?: JSONObject.NULL).put("zero_progress", 1.0)
+                        .put("repetitions", 2))).toString()
+                for (time in 0L..40000L step 20000L) trace.invoke(connection, sample(time, true), true)
+                for (time in 60000L..100000L step 20000L) {
+                    trace.invoke(connection, sample(time, false, "Waiting for thigh readings."), true)
+                }
+                trace.invoke(connection, sample(120000, true), true)
+                val lines = file.readLines()
+                assertEquals(3, lines.count { it.contains("thigh_readings ") })
+                assertEquals(3, lines.count { it.contains("thigh_transition ") })
+                assertTrue(lines.any { it.contains("available=false device_us=60000 device_gap_us=20000") })
+                assertTrue(lines.any { it.contains("reason=Waiting for thigh readings.") && it.contains("repetitions=2") })
+                assertTrue(lines.filter { it.contains("thigh_transition ") }.all { it.contains("zero_progress=1.0") })
+                assertTrue(lines.any { it.contains("accel=[0,0,1] gyro=[0,0,0]") })
+                assertFalse(lines.any { it.contains("thigh_accel") || it.contains("thigh_gyro") })
+                val cycle = JSONObject(sample(140000, true))
+                val thigh = cycle.getJSONObject("analytics").getJSONObject("thigh")
+                thigh.put("reference_peak_deg", 57.54).put("upright_band_deg", 8.6)
+                    .put("cycle_peak_deg", 57.51).put("tilt_deg", 57.51)
+                thigh.put("rep_phase", "depth_reached")
+                trace.invoke(connection, cycle.toString(), true)
+                trace.invoke(connection, cycle.toString(), true)
+                thigh.put("rep_phase", "standing").put("repetitions", 3)
+                    .put("last_completed_cycle_peak_deg", 57.51).put("tilt_deg", 0)
+                trace.invoke(connection, cycle.toString(), true)
+                val cycles = file.readLines().filter { it.contains("thigh_cycle ") }
+                assertEquals(3, cycles.size)
+                assertTrue(cycles.any { it.contains("phase=depth_reached") && it.contains("reference_peak_deg=57.54") })
+                assertTrue(cycles.any { it.contains("phase=standing repetitions=3") && it.contains("last_completed_cycle_peak_deg=57.51") })
+            }
+        } finally {
+            if (saved != null) file.writeBytes(saved) else file.delete()
+        }
+    }
+
+    fun testDiagnosticsAreBoundedAndReceiverStopsWithConnection() {
+        val screen = activity
+        val file = File(screen.filesDir, "wearable-connection.log")
+        val saved = if (file.exists()) file.readBytes() else null
+        val log = WearableConnection::class.java.getDeclaredMethod("diagnostic", String::class.java).apply { isAccessible = true }
+        val start = WearableConnection::class.java.getDeclaredMethod("startWifiDiagnostics").apply { isAccessible = true }
+        val receiver = WearableConnection::class.java.getDeclaredField("wifiDiagnostics").apply { isAccessible = true }
+        try {
+            instrumentation.runOnMainSync {
+                val connection = WearableConnection(screen) {}
+                file.writeText("x".repeat(65 * 1024))
+                log.invoke(connection, "test_diagnostic\nsecond_line")
+                assertTrue(file.length() < 2048)
+                assertTrue(file.readText().contains("test_diagnostic second_line"))
+                start.invoke(connection)
+                assertNotNull(receiver.get(connection))
+                connection.disconnect()
+                assertNull(receiver.get(connection))
+            }
+        } finally {
+            if (saved != null) file.writeBytes(saved) else file.delete()
+        }
+    }
+
+    fun testDiagnosticCallbacksDoNotChangeConnectionAndIgnoreStaleEpochs() {
+        val screen = activity
+        val file = File(screen.filesDir, "wearable-connection.log")
+        val events = mutableListOf<String>()
+        val active = WearableConnection::class.java.getDeclaredField("active").apply { isAccessible = true }
+        val generation = WearableConnection::class.java.getDeclaredField("generation").apply { isAccessible = true }
+        val parcel = Parcel.obtain()
+        parcel.writeInt(43)
+        parcel.setDataPosition(0)
+        val network = Network.CREATOR.createFromParcel(parcel)
+        parcel.recycle()
+        fun countEntries(prefix: String) = if (file.exists()) file.readLines().count { it.contains("$prefix network=$network ") } else 0
+        val capabilitiesBefore = countEntries("wifi_capabilities")
+        val ipBefore = countEntries("wifi_ip")
+        lateinit var connection: WearableConnection
+        instrumentation.runOnMainSync {
+            connection = WearableConnection(screen) { events.add(it) }
+            active.setBoolean(connection, true)
+            generation.setLong(connection, 9)
+            val capabilities = NetworkCapabilities()
+            val properties = LinkProperties()
+            connection.networkObserver(8).onCapabilitiesChanged(network, capabilities)
+            connection.networkObserver(8).onLinkPropertiesChanged(network, properties)
+            connection.networkObserver(9).onCapabilitiesChanged(network, capabilities)
+            connection.networkObserver(9).onLinkPropertiesChanged(network, properties)
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync {
+            assertTrue(active.getBoolean(connection))
+            assertEquals(9L, generation.getLong(connection))
+            assertTrue(events.isEmpty())
+            assertEquals(capabilitiesBefore + 1, countEntries("wifi_capabilities"))
+            assertEquals(ipBefore + 1, countEntries("wifi_ip"))
+            connection.disconnect()
+        }
+    }
+
+    fun testUnavailableStopsOnceWithoutRetryAndIgnoresStaleCallbacks() {
+        val screen = activity
+        val events = mutableListOf<String>()
+        val active = WearableConnection::class.java.getDeclaredField("active").apply { isAccessible = true }
+        val generation = WearableConnection::class.java.getDeclaredField("generation").apply { isAccessible = true }
+        lateinit var connection: WearableConnection
+        lateinit var pending: ConnectivityManager.NetworkCallback
+        var stoppedGeneration = 0L
+        instrumentation.runOnMainSync {
+            connection = WearableConnection(screen) { events.add(it) }
+            active.setBoolean(connection, true)
+            generation.setLong(connection, 7)
+            connection.networkObserver(6).onUnavailable() // An old denial cannot cancel current approval.
+            pending = connection.networkObserver(7)
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync {
+            assertTrue(active.getBoolean(connection))
+            assertTrue(events.isEmpty())
+            pending.onUnavailable()
+        }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync {
+            assertFalse(active.getBoolean(connection))
+            stoppedGeneration = generation.getLong(connection)
+            assertEquals("error", JSONObject(events.single()).getString("status"))
+            assertTrue(JSONObject(events.single()).getString("message").contains("Open Wi-Fi settings"))
+            pending.onUnavailable() // A duplicate denial must not emit or restart.
+        }
+        Thread.sleep(1300)
+        instrumentation.runOnMainSync {
+            assertEquals(stoppedGeneration, generation.getLong(connection))
+            assertEquals(1, events.size)
+        }
+    }
+
+    fun testJoinedNetworkSelectionRejectsUnknownAndUnrelatedSsids() {
+        val parcel = Parcel.obtain()
+        parcel.writeInt(41)
+        parcel.setDataPosition(0)
+        val unrelated = Network.CREATOR.createFromParcel(parcel)
+        parcel.setDataPosition(0)
+        parcel.writeInt(42)
+        parcel.setDataPosition(0)
+        val wearable = Network.CREATOR.createFromParcel(parcel)
+        parcel.recycle()
+        assertEquals(wearable, WearableConnection.findWearableNetwork(listOf(
+            unrelated to "Other Wi-Fi", wearable to "\"REHAB\"")))
+        assertEquals(wearable, WearableConnection.findWearableNetwork(listOf(wearable to "REHAB")))
+        assertNull(WearableConnection.findWearableNetwork(listOf(
+            unrelated to "Other Wi-Fi", wearable to "<unknown ssid>")))
+        assertNull(WearableConnection.findWearableNetwork(listOf(wearable to null)))
+    }
+
     fun testStaleRetriesAndDisconnectedDelayedRetryAreIgnored() {
         val screen = activity
         val events = mutableListOf<String>()

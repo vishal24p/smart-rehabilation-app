@@ -10,6 +10,8 @@ import java.text.ParsePosition
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import java.util.Date
+import java.util.GregorianCalendar
 
 object ExerciseReferencePayload {
     fun validate(value: Any?): Map<String, Any> {
@@ -78,24 +80,111 @@ object AppSettingsPayload {
     }
 }
 
-class ExerciseReferenceStore(context: Context, name: String = "exercise_references.db") : SQLiteOpenHelper(context, name, null, 3) {
+object GaitReferencePayload {
+    private val metricKeys = setOf("cadence_spm", "right_step_time_s", "left_step_time_s",
+        "right_stride_time_s", "left_stride_time_s")
+
+    fun validate(value: Any?): Map<String, Any> {
+        require(value is Map<*, *>) { "Gait reference must be a map." }
+        require(value.keys == setOf("measurement_version", "placement", "recorded_at", "right_strides", "left_strides", "metrics")) {
+            "Gait reference must contain exactly the required fields."
+        }
+        require(value["measurement_version"] == "gait_forefoot_timing_v1" &&
+            value["placement"] == "right_thigh_shin_bilateral_forefeet") {
+            "Unsupported gait reference. Record it again."
+        }
+        val counts = listOf("right_strides", "left_strides").associateWith { key ->
+            val count = value[key]
+            require((count is Int || count is Long) && (count as Number).toLong() >= 10) {
+                "A reference needs at least 10 complete strides per foot."
+            }
+            count as Number
+        }
+        val metrics = value["metrics"]
+        require(metrics is Map<*, *> && metrics.keys == metricKeys) { "Reference must contain the five gait timing metrics." }
+        val validatedMetrics = metricKeys.associateWith { key ->
+            val number = metrics[key]
+            require(number is Number && number.toDouble().isFinite() && number.toDouble() > 0) { "Invalid $key." }
+            number.toDouble()
+        }
+        val date = value["recorded_at"]
+        require(date is String && Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z").matches(date)) {
+            "Invalid gait reference timestamp."
+        }
+        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ROOT).apply {
+            calendar = GregorianCalendar(TimeZone.getTimeZone("UTC"), Locale.ROOT).apply {
+                gregorianChange = Date(Long.MIN_VALUE)
+            }
+            isLenient = false
+        }
+        val position = ParsePosition(0)
+        require(format.parse(date.take(19), position) != null && position.index == 19) { "Invalid gait reference date." }
+        return mapOf("measurement_version" to "gait_forefoot_timing_v1", "placement" to "right_thigh_shin_bilateral_forefeet",
+            "recorded_at" to date, "right_strides" to counts.getValue("right_strides"),
+            "left_strides" to counts.getValue("left_strides"), "metrics" to validatedMetrics)
+    }
+}
+
+class ExerciseReferenceStore(context: Context, name: String = "exercise_references.db") : SQLiteOpenHelper(context, name, null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE exercise_references (exercise_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
         createSettings(db)
         createSessions(db)
+        createGaitTable(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        check(oldVersion in 1..2 && newVersion == 3) { "Unsupported reference database version." }
-        if (oldVersion < 2) createSettings(db)
+        check(oldVersion in 1..3 && newVersion == 4) { "Unsupported reference database version." }
+        createSettings(db)
         createSessions(db)
+        createGaitTable(db)
     }
     private fun createSettings(db: SQLiteDatabase) = db.execSQL(
-        "CREATE TABLE app_settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS app_settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)",
     )
     private fun createSessions(db: SQLiteDatabase) = db.execSQL(
-        "CREATE TABLE workout_sessions (id TEXT PRIMARY KEY, payload TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS workout_sessions (id TEXT PRIMARY KEY, payload TEXT NOT NULL)",
     )
 
+    private fun createGaitTable(db: SQLiteDatabase) = db.execSQL(
+        "CREATE TABLE IF NOT EXISTS gait_reference (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)",
+    )
+
+    fun loadGait(): Map<String, Any>? = readableDatabase.query(
+        "gait_reference", arrayOf("payload"), "id = ?", arrayOf("1"), null, null, null,
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) null else {
+            val json = JSONObject(cursor.getString(0))
+            val metrics = json.getJSONObject("metrics")
+            val values = json.keys().asSequence().associateWith { key ->
+                if (key == "metrics") metrics.keys().asSequence().associateWith { metrics.get(it) } else json.get(key)
+            }
+            if (values["measurement_version"] == "gait_heel_timing_v1" &&
+                values["placement"] == "right_thigh_shin_bilateral_heels") {
+                // Validate the stored record before ignoring its incompatible sensor placement.
+                GaitReferencePayload.validate(values + mapOf(
+                    "measurement_version" to "gait_forefoot_timing_v1",
+                    "placement" to "right_thigh_shin_bilateral_forefeet",
+                ))
+                null
+            } else GaitReferencePayload.validate(values)
+        }
+    }
+    fun saveGait(value: Any?): Map<String, Any> {
+        val reference = GaitReferencePayload.validate(value)
+        val values = ContentValues().apply {
+            put("id", 1)
+            put("payload", JSONObject(reference).toString())
+        }
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            check(db.insertWithOnConflict("gait_reference", null, values, SQLiteDatabase.CONFLICT_REPLACE) != -1L) {
+                "Could not save the gait reference."
+            }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        return reference
+    }
     fun loadSettings(): Map<String, Any?> = readableDatabase.query(
         "app_settings", arrayOf("payload"), "id = 1", null, null, null, null,
     ).use { cursor ->

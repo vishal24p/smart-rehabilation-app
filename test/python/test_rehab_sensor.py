@@ -53,12 +53,12 @@ class SensorParserTest(unittest.TestCase):
     def test_named_dual_failed_thigh_cannot_complete_pending_return(self):
         rig = ThighRig()
         rig.begin(recording=False)
-        rig.ramp(60)
-        rig.feed(60)
-        rig.ramp(0)
+        rig.ramp(45)
+        rig.feed(45)
+        rig.ramp(15)
         self.assertEqual(rig.processor.repetitions, 0)
-        self.assertTrue(rig.processor.bend_confirmed)
-        self.assertIsNotNone(rig.processor.return_since)
+        self.assertLess(rig.processor.cycle_peak, 60)
+        self.assertIsNotNone(rig.processor.departure)
         parser = SensorParser()
         parser.processor.thigh = rig.processor
         parser.process_line(','.join(HEADER.split(',')[:13] + ['fsr_left', 'fsr_right']))
@@ -67,14 +67,17 @@ class SensorParserTest(unittest.TestCase):
             sample = json.loads(parser.process_line(','.join(map(str, values))))
             rig.t += 50_000
         thigh = sample['analytics']['thigh']
-        self.assertEqual(thigh['state'], 'interrupted')
+        self.assertEqual(thigh['state'], 'active')
         self.assertEqual(thigh['repetitions'], 0)
-        self.assertEqual(thigh['result']['outcome'], 'interrupted')
-        self.assertEqual(thigh['result']['repetitions'], 0)
+        self.assertIsNone(thigh['result'])
+        self.assertIn('10 seconds', thigh['reason'])
+        self.assertIsNone(rig.processor.departure)
         self.assertIsNone(sample['thigh_accel'])
         self.assertIsNone(sample['thigh_gyro'])
         self.assertEqual(sample['shin_accel'], [0, 0, 16384])
         self.assertEqual((sample['fsr_left'], sample['fsr']), (800, 200))
+        self.assertEqual(rig.ramp(0)['repetitions'], 0)
+        self.assertEqual(rig.cycle()['repetitions'], 1)
 
     def test_named_dual_failed_shin_keeps_thigh_heels_and_recovers(self):
         parser = SensorParser()
@@ -178,6 +181,77 @@ class SensorParserTest(unittest.TestCase):
 
 
 class ParserAnalyticsTest(unittest.TestCase):
+    def test_invalid_required_frames_interrupt_gait_but_leave_legacy_parser_behavior(self):
+        from test_gait_session import GaitRig
+        edits = ('negative_timestamp', 'large_timestamp', 'missing_channel', 'extra_channel',
+                 'invalid_number', 'negative_fsr', 'large_fsr', 'clipped_raw_imu', 'oversized')
+        for action in ('gait_reference_begin', 'gait_session_begin', 'gait_forefoot_unloaded', 'gait_forefoot_loaded', 'gait_standing'):
+            for edit in edits:
+                with self.subTest(action=action, edit=edit):
+                    processor = SessionProcessor()
+                    parser = SensorParser(True, processor)
+                    parser.process_line(HEADER + ',fsr_left')
+                    rig = GaitRig(processor)
+                    rig.calibrate()
+                    if action == 'gait_session_begin':
+                        rig.begin()
+                        rig.walk()
+                        reference = rig.finish()['reference_preview']
+                        rig.begin(reference)
+                        rig.walk()
+                    elif action == 'gait_reference_begin':
+                        rig.begin()
+                        rig.walk()
+                    else:
+                        rig.command(action)
+                    values = [str(value) for value in [rig.t, 0, 0, 16384, 0, 0, 0,
+                                                       0, 0, 16384, 0, 0, 0, 100, 100]]
+                    if edit == 'negative_timestamp': values[0] = '-1'
+                    elif edit == 'large_timestamp': values[0] = str(0x100000000)
+                    elif edit == 'missing_channel': values.pop()
+                    elif edit == 'extra_channel': values.append('100')
+                    elif edit == 'invalid_number': values[8] = 'missing'
+                    elif edit == 'negative_fsr': values[-1] = '-1'
+                    elif edit == 'large_fsr': values[-1] = '4096'
+                    elif edit == 'clipped_raw_imu': values[1] = '32768'
+                    elif edit == 'oversized': values[1] = '1' * 513
+                    legacy_state = processor.snapshot()['state']
+                    self.assertIsNone(parser.process_line(','.join(values)))
+                    result = processor.snapshot()['gait']
+                    self.assertEqual(result['state'], 'interrupted')
+                    self.assertIsNone(result['reference_preview'])
+                    if action in ('gait_reference_begin', 'gait_session_begin'):
+                        self.assertEqual(result['comparison'], 'insufficient_data')
+                        self.assertTrue(result['summary']['interrupted'])
+                    self.assertEqual(processor.snapshot()['state'], legacy_state)
+
+    def test_gait_physical_sides_and_header_restart_preserve_interrupted_summary(self):
+        from test_gait_session import GaitRig
+        processor = SessionProcessor()
+        parser = SensorParser(True, processor)
+        parser.process_line(HEADER + ',fsr_left')
+        rig = GaitRig(processor)
+        rig.calibrate()
+        rig.begin()
+
+        def feed(right, left):
+            for _ in range(5):
+                # Legacy fsr is physical left; parser's established correction remains.
+                values = [rig.t, 0, 0, 16384, 0, 0, 0, 0, 0, 16384, 0, 0, 0, left, right]
+                sample = json.loads(parser.process_line(','.join(map(str, values))))
+                rig.t += 20_000
+            return sample['analytics']['gait']
+
+        feed(100, 100)
+        result = feed(900, 100)
+        self.assertEqual(result['metrics']['right_steps'], 1)
+        self.assertEqual(result['metrics']['left_steps'], 0)
+        parser.process_line(HEADER + ',fsr_left')
+        result = processor.snapshot()['gait']
+        self.assertTrue(result['summary']['interrupted'])
+        self.assertEqual(result['comparison'], 'insufficient_data')
+        self.assertEqual(result['summary']['metrics']['right_steps'], 1)
+
     def test_physical_heel_mapping_reaches_processor_and_calibrated_shares(self):
         full_motion = HEADER.split(',')[:13]
         for header in (HEADER.split(',')[:7] + ['fsr_left', 'fsr_right'],

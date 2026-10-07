@@ -7,6 +7,7 @@ import 'thigh_session_panel.dart';
 import 'exercise_reference.dart';
 import 'app_settings.dart';
 import 'workout_session.dart';
+import 'gait_session_panel.dart';
 
 class LiveSensorScreen extends StatefulWidget {
   const LiveSensorScreen({
@@ -80,7 +81,11 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text(exerciseNames[widget.exerciseId] ?? 'Live sensors'),
+      title: Text(
+        widget.exerciseId == 'gait'
+            ? 'Gait analysis'
+            : exerciseNames[widget.exerciseId] ?? 'Live sensors',
+      ),
       backgroundColor: Colors.white,
     ),
     body: SafeArea(
@@ -94,9 +99,25 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
               if (widget.workout != null) widget.workout!,
             ]),
             builder: (context, _) {
+              final gaitMode = widget.exerciseId == 'gait';
+              final contactName = gaitMode ? 'forefoot' : 'heel';
+              final contactTitle = gaitMode ? 'Forefoot' : 'Heel';
+              final adcMax = gaitMode ? 4095 : 1023;
               final readings = _connection.latest;
               final analytics = _connection.analytics;
-              final leftShare = analytics?.heelShareLeft?.round();
+              final leftShare = analytics?.heelShareLeft;
+              final rightShare = analytics?.heelShareRight;
+              String? pressure;
+              if (readings != null && leftShare != null && rightShare != null) {
+                final larger = leftShare > rightShare ? leftShare : rightShare;
+                if (larger > 0) {
+                  pressure = (leftShare - rightShare).abs() <= .1 * larger
+                      ? 'Same'
+                      : leftShare > rightShare
+                      ? 'Left leg more'
+                      : 'Right leg more';
+                }
+              }
               final active = _connection.active;
               final status = switch (_connection.status) {
                 WearableStatus.idle => 'Ready to connect',
@@ -183,7 +204,9 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                       ],
                     ),
                   const SizedBox(height: 12),
-                  if (widget.exerciseId != null)
+                  if (widget.exerciseId == 'gait')
+                    GaitSessionPanel(connection: _connection)
+                  else if (widget.exerciseId != null)
                     ThighSessionPanel(
                       connection: _connection,
                       exerciseId: widget.exerciseId!,
@@ -242,16 +265,16 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                         const SizedBox(height: 24),
                       ],
                       Text(
-                        'Heel ADC · last 10 seconds',
+                        '$contactTitle ADC · last 10 seconds',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      const Text('Right heel'),
-                      Text('ADC: ${readings?.fsr ?? '—'} / 1023'),
+                      Text('Right $contactName'),
+                      Text('ADC: ${readings?.fsr ?? '—'} / $adcMax'),
                       const SizedBox(height: 12),
                       Semantics(
                         label: _connection.history.isEmpty
-                            ? 'Heel ADC graph has no live readings.'
-                            : 'Heel ADC graph. ${_connection.history.length} recent readings; latest ${_connection.history.last.adc} out of 1023.',
+                            ? '$contactTitle ADC graph has no live readings.'
+                            : '$contactTitle ADC graph. ${_connection.history.length} recent readings; latest ${_connection.history.last.adc} out of $adcMax.',
                         child: SizedBox(
                           height: 140,
                           child: _connection.history.isEmpty
@@ -264,6 +287,7 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                                   painter: _HeelGraph(
                                     _connection.history,
                                     Theme.of(context).colorScheme.primary,
+                                    adcMax: adcMax,
                                   ),
                                 ),
                         ),
@@ -278,20 +302,21 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                       if (readings?.fsrLeft != null) ...[
                         const SizedBox(height: 20),
                         Text(
-                          'Left heel ADC · last 10 seconds',
+                          'Left $contactName ADC · last 10 seconds',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
-                        Text('ADC: ${readings!.fsrLeft} / 1023'),
+                        Text('ADC: ${readings!.fsrLeft} / $adcMax'),
                         const SizedBox(height: 12),
                         Semantics(
                           label:
-                              'Left heel ADC graph. Latest ${readings.fsrLeft} out of 1023.',
+                              'Left $contactName ADC graph. Latest ${readings.fsrLeft} out of $adcMax.',
                           child: SizedBox(
                             height: 140,
                             child: CustomPaint(
                               painter: _HeelGraph(
                                 _connection.history,
                                 Theme.of(context).colorScheme.primary,
+                                adcMax: adcMax,
                                 left: true,
                               ),
                             ),
@@ -312,85 +337,43 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Heel signal share',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final side in [
-                        ('Left', readings == null ? null : leftShare),
-                        (
-                          'Right',
-                          readings == null || leftShare == null
-                              ? null
-                              : 100 - leftShare,
-                        ),
-                      ])
-                        Expanded(
-                          child: Semantics(
-                            container: true,
-                            label:
-                                '${side.$1} ${side.$2 == null ? 'unavailable' : '${side.$2}%'}${_injuredLeg == side.$1.toLowerCase() ? ', injured leg' : ''}',
-                            excludeSemantics: true,
-                            child: Column(
-                              key: ValueKey(
-                                'heel-${side.$1.toLowerCase()}-share',
-                              ),
-                              children: [
-                                Text(
-                                  side.$1,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.headlineSmall,
-                                ),
-                                if (_injuredLeg == side.$1.toLowerCase())
-                                  const Text('Injured leg'),
-                                const SizedBox(height: 8),
-                                FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Text(
-                                    side.$2 == null ? '—' : '${side.$2}%',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.displayMedium,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  if (readings != null && leftShare != null) ...[
+                  if (!gaitMode) ...[
+                    const SizedBox(height: 24),
+                    Text(
+                      'Heel pressure',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                     const SizedBox(height: 8),
-                    Text(
-                      leftShare == 50
-                          ? 'Equal shares'
-                          : 'Higher signal: ${leftShare > 50 ? 'left' : 'right'}',
-                    ),
-                  ] else
-                    Text(
-                      readings == null
-                          ? 'No sensors connected'
-                          : analytics?.heelShareReason ==
-                                'Capture unloaded and loaded heels first'
-                          ? 'Capture unloaded sensors in Settings first'
-                          : analytics?.heelShareReason ??
-                                'Capture unloaded sensors in Settings first',
-                    ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Baseline-adjusted heel-signal share. Not body-weight percentage.',
-                  ),
-                  if (_settingsError != null)
-                    TextButton(
-                      onPressed: _loadSettings,
-                      child: Text('$_settingsError Retry'),
-                    ),
+                    if (pressure != null)
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          pressure,
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                      )
+                    else
+                      Text(
+                        readings == null
+                            ? 'No sensors connected'
+                            : analytics?.heelShareReason ==
+                                  'Capture unloaded and loaded heels first'
+                            ? 'Capture unloaded sensors in Settings first'
+                            : analytics?.heelShareReason ??
+                                  'Capture unloaded sensors in Settings first',
+                      ),
+                    const SizedBox(height: 8),
+                    if (_injuredLeg != null)
+                      Text(
+                        '${_injuredLeg == 'left' ? 'Left' : 'Right'} injured leg',
+                      ),
+                    const Text('Based on heel sensor signals.'),
+                    if (_settingsError != null)
+                      TextButton(
+                        onPressed: _loadSettings,
+                        child: Text('$_settingsError Retry'),
+                      ),
+                  ],
                 ],
               );
             },
@@ -447,10 +430,16 @@ class _MotionReadings extends StatelessWidget {
 }
 
 class _HeelGraph extends CustomPainter {
-  const _HeelGraph(this.points, this.color, {this.left = false});
+  const _HeelGraph(
+    this.points,
+    this.color, {
+    this.left = false,
+    this.adcMax = 1023,
+  });
   final List<HeelPoint> points;
   final Color color;
   final bool left;
+  final int adcMax;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -483,7 +472,7 @@ class _HeelGraph extends CustomPainter {
             1.0,
           ) *
           size.width;
-      final y = (1 - (adc / 1023).clamp(0.0, 1.0)) * size.height;
+      final y = (1 - (adc / adcMax).clamp(0.0, 1.0)) * size.height;
       if (!connected) {
         path.moveTo(x, y);
       } else {
@@ -495,7 +484,10 @@ class _HeelGraph extends CustomPainter {
     final latest = left ? points.last.leftAdc : points.last.adc;
     if (latest != null) {
       canvas.drawCircle(
-        Offset(size.width, (1 - (latest / 1023).clamp(0.0, 1.0)) * size.height),
+        Offset(
+          size.width,
+          (1 - (latest / adcMax).clamp(0.0, 1.0)) * size.height,
+        ),
         3,
         Paint()..color = color,
       );
@@ -506,5 +498,6 @@ class _HeelGraph extends CustomPainter {
   bool shouldRepaint(covariant _HeelGraph oldDelegate) =>
       oldDelegate.points != points ||
       oldDelegate.color != color ||
-      oldDelegate.left != left;
+      oldDelegate.left != left ||
+      oldDelegate.adcMax != adcMax;
 }

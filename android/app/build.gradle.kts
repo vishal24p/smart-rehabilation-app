@@ -7,6 +7,7 @@ plugins {
 }
 
 android {
+    buildFeatures { buildConfig = true }
     useLibrary("android.test.runner", false)
     useLibrary("android.test.base", false)
     namespace = "com.example.rehab_monitor"

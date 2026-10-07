@@ -68,7 +68,25 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
   void initState() {
     super.initState();
     _store = widget.store ?? ExerciseReferenceStore();
+    widget.workout?.addListener(_workoutChanged);
     _load();
+  }
+
+  void _workoutChanged() {
+    final workout = widget.workout!;
+    if (_began &&
+        !workout.hasAttempt &&
+        !workout.busy &&
+        !workout.needsRetry &&
+        widget.connection.thigh?.result == null) {
+      setState(() => _began = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.workout?.removeListener(_workoutChanged);
+    super.dispose();
   }
 
   Future<void> _begin() async {
@@ -89,7 +107,7 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
     }
     if (mounted) {
       setState(() {
-        _began = accepted;
+        _began = accepted && (workout == null || workout.hasAttempt);
         _starting = false;
       });
     }
@@ -156,6 +174,8 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
               snapshot?.exerciseId == widget.exerciseId &&
               (!managed ||
                   _began ||
+                  (snapshot?.state == 'interrupted' &&
+                      snapshot?.result == null) ||
                   (_starting &&
                       {'zeroing', 'active'}.contains(snapshot?.state)))
           ? snapshot
@@ -215,7 +235,7 @@ class _ThighSessionPanelState extends State<ThighSessionPanel> {
               const SizedBox(height: 16),
               SessionZeroCountdown(progress: current!.zeroProgress),
             ],
-            if (state == 'active')
+            if (state == 'active' && current?.reason == null)
               Semantics(
                 liveRegion: true,
                 child: const Text('Zero set. Begin your exercise.'),

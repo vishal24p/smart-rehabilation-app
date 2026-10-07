@@ -74,8 +74,8 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
     final reference = ExerciseReference(
       exerciseId: _exerciseId,
       peakDeg: peak,
-      bendThresholdDeg: 0.6 * peak,
-      uprightBandDeg: (0.15 * peak).clamp(5.0, 10.0),
+      bendThresholdDeg: peak,
+      uprightBandDeg: 10.0,
       recordedAt: DateTime.now().toUtc().toIso8601String(),
     );
     try {
@@ -143,10 +143,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
               final live = _connection.status == WearableStatus.live;
               final available = _connection.latest?.thighAccel != null;
               final saved = _references[_exerciseId];
-              final finishReady =
-                  current?.recordedPeakDeg != null &&
-                  current?.tiltDeg != null &&
-                  current!.tiltDeg! <= 10;
+              final finishReady = current?.recordedPeakDeg != null;
               return ListView(
                 padding: const EdgeInsets.all(24),
                 children: [
@@ -205,32 +202,34 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                   const SizedBox(height: 16),
                   Text(live ? 'Wearable connected' : _connection.message),
                   const SizedBox(height: 8),
-                  if (!live)
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(52),
-                      ),
-                      onPressed: _connection.active || pending
-                          ? null
-                          : () => _connection.connect(scaleConfirmed: true),
-                      child: const Text('Connect wearable'),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
                     ),
+                    onPressed: pending || (!live && _connection.active)
+                        ? null
+                        : () => live
+                              ? _connection.disconnect()
+                              : _connection.connect(scaleConfirmed: true),
+                    child: Text(
+                      live ? 'Disconnect wearable' : 'Connect wearable',
+                    ),
+                  ),
                   if (live && !available)
                     const Text('Thigh readings unavailable. Check the sensor.'),
                   const SizedBox(height: 16),
                   if (state == 'zeroing')
                     SessionZeroCountdown(progress: current!.zeroProgress),
                   if (state == 'recording') ...[
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        current?.recordedPeakDeg == null
-                            ? 'Zero set. Bend at least 30°, pause briefly, then return standing.'
-                            : finishReady
-                            ? 'Movement captured. Ready to finish.'
-                            : 'Movement captured. Return standing.',
+                    if (current?.reason == null)
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          current?.recordedPeakDeg == null
+                              ? 'Zero set. Perform one complete movement and return standing.'
+                              : 'Movement captured. Ready to finish.',
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 12),
                     Text(
                       'Thigh tilt: ${current?.tiltDeg == null ? '—' : '${current!.tiltDeg!.toStringAsFixed(1)}°'}',

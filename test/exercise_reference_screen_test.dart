@@ -111,6 +111,42 @@ void main() {
   }
 
   testWidgets(
+    'live missing thigh readings can disconnect and reconnect registration',
+    (tester) async {
+      await showReference(tester);
+      await tester.runAsync(
+        () => fixtures.emit(
+          Map<String, dynamic>.from(fixtures.sample(time: ++time))
+            ..['thigh_accel'] = null
+            ..['thigh_gyro'] = null,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(connection.status, WearableStatus.live);
+      await tester.ensureVisible(find.text('Disconnect wearable'));
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Disconnect wearable'));
+        await Future<void>.delayed(Duration.zero);
+      });
+      await tester.pumpAndSettle();
+      expect(commands.last.method, 'disconnect');
+      expect(records.single['reference_peak_deg'], 45);
+      expect(find.text('Connect wearable'), findsOneWidget);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Connect wearable'));
+        await Future<void>.delayed(Duration.zero);
+      });
+      await snapshot(tester, 'idle');
+      expect(connection.status, WearableStatus.live);
+      await tap(tester, 'Re-record reference');
+      expect(
+        (commands.last.arguments as Map)['action'],
+        'thigh_reference_begin',
+      );
+    },
+  );
+
+  testWidgets(
     'recording previews and saves deliberately; failed replacement preserves target',
     (tester) async {
       await showReference(tester);
@@ -130,9 +166,51 @@ void main() {
       saveFails = false;
       await tap(tester, 'Save reference');
       expect(records.single['reference_peak_deg'], 60);
-      expect(records.single['bend_threshold_deg'], 36);
-      expect(records.single['upright_band_deg'], 9);
+      expect(records.single['bend_threshold_deg'], 60);
+      expect(records.single['upright_band_deg'], 10);
       expect(find.text('Reference saved'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'short zeroing gap resets Register countdown without another begin',
+    (tester) async {
+      await showReference(tester);
+      await tap(tester, 'Re-record reference');
+      await snapshot(tester, 'zeroing', progress: .8);
+      await tester.pumpAndSettle();
+      expect(find.text('1'), findsOneWidget);
+      const reason = 'Readings paused; waiting for fresh readings.';
+      await snapshot(tester, 'zeroing', reason: reason);
+      await tester.pumpAndSettle();
+      expect(find.text('3'), findsOneWidget);
+      expect(find.text(reason), findsOneWidget);
+      expect(find.text('Re-record reference'), findsNothing);
+      expect(connection.status, WearableStatus.live);
+      expect(records.single['reference_peak_deg'], 45);
+
+      await snapshot(tester, 'zeroing', progress: .4);
+      await tester.pumpAndSettle();
+      expect(find.text('2'), findsOneWidget);
+      expect(find.text(reason), findsNothing);
+      await snapshot(tester, 'recording', tilt: 0);
+      await tester.pumpAndSettle();
+      expect(find.text('Finish recording'), findsOneWidget);
+      await snapshot(tester, 'recording', reason: reason);
+      expect(find.text(reason), findsOneWidget);
+      expect(find.textContaining('Zero set. Perform'), findsNothing);
+      expect(find.text('Re-record reference'), findsNothing);
+      await snapshot(tester, 'recording', tilt: 0);
+      expect(find.text(reason), findsNothing);
+      expect(find.textContaining('Zero set. Perform'), findsOneWidget);
+      expect(connection.thigh!.state, 'recording');
+      expect(connection.status, WearableStatus.live);
+      expect(records.single['reference_peak_deg'], 45);
+      expect(
+        commands.where((call) => call.method == 'sessionCommand').length,
+        1,
+      );
+      expect(commands.where((call) => call.method == 'disconnect'), isEmpty);
     },
   );
 
@@ -240,6 +318,19 @@ void main() {
         repetitions: 1,
       );
       expect(find.text('Zero set. Begin your exercise.'), findsOneWidget);
+      const recovery = 'Readings paused; waiting for fresh readings.';
+      await snapshot(tester, 'active', reason: recovery, repetitions: 1);
+      expect(find.text(recovery), findsOneWidget);
+      expect(find.text('Zero set. Begin your exercise.'), findsNothing);
+      await snapshot(
+        tester,
+        'active',
+        latest: 50,
+        difference: 5,
+        repetitions: 1,
+      );
+      expect(find.text(recovery), findsNothing);
+      expect(find.text('Zero set. Begin your exercise.'), findsOneWidget);
       expect(find.text('Repetitions'), findsOneWidget);
       expect(find.text('1'), findsOneWidget);
       expect(find.text('Latest range'), findsOneWidget);
@@ -274,7 +365,7 @@ void main() {
       expect(find.text('Captured range: —'), findsOneWidget);
       expect(
         find.text(
-          'Zero set. Bend at least 30°, pause briefly, then return standing.',
+          'Zero set. Perform one complete movement and return standing.',
         ),
         findsOneWidget,
       );
@@ -290,8 +381,17 @@ void main() {
         peak: 50,
       );
       expect(find.text('Captured range: 50.0°'), findsOneWidget);
-      expect(find.text('Movement captured. Return standing.'), findsOneWidget);
-      expect(finish().onPressed, isNull);
+      expect(find.text('Movement captured. Ready to finish.'), findsOneWidget);
+      expect(finish().onPressed, isNotNull);
+      await snapshot(
+        tester,
+        'recording',
+        exerciseId: exerciseId,
+        tilt: 40,
+        peak: 50,
+      );
+      expect(find.text('Thigh tilt: 40.0°'), findsOneWidget);
+      expect(finish().onPressed, isNotNull);
       await snapshot(
         tester,
         'recording',
@@ -302,7 +402,7 @@ void main() {
       expect(find.text('Movement captured. Ready to finish.'), findsOneWidget);
       expect(finish().onPressed, isNotNull);
       await snapshot(tester, 'recording', exerciseId: exerciseId, peak: 50);
-      expect(finish().onPressed, isNull);
+      expect(finish().onPressed, isNotNull);
       await snapshot(
         tester,
         'recording',

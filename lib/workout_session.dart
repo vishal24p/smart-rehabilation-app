@@ -292,7 +292,7 @@ class WorkoutSessionController extends ChangeNotifier {
       _notify();
       return;
     }
-    if (thigh.state == 'interrupted' && result == null && !_sawActive) {
+    if (thigh.state == 'interrupted' && result == null && _sawRunning && !_sawActive) {
       _attemptId = null;
       _notify();
       return;

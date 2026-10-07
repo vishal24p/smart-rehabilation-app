@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'exercise_reference.dart';
 import 'app_settings.dart';
+import 'gait_analysis.dart';
 
 enum WearableStatus {
   idle,
@@ -118,6 +119,7 @@ class RehabAnalytics {
     this.heelZero,
     this.summary,
     this.thigh,
+    this.gait,
   });
   final RehabState state;
   final String? reason;
@@ -133,6 +135,7 @@ class RehabAnalytics {
   final Map<String, dynamic>? heelZero;
   final RehabSummary? summary;
   final ThighAnalytics? thigh;
+  final GaitAnalytics? gait;
 
   factory RehabAnalytics.fromJson(Map<String, dynamic> json) {
     final state = RehabState.values
@@ -147,6 +150,7 @@ class RehabAnalytics {
     final shareLeft = _share(json, 'heel_share_left');
     final summary = json['summary'];
     final thigh = json['thigh'];
+    final gait = json['gait'];
     if (state == null ||
         !json.containsKey('reason') ||
         (json['reason'] != null && json['reason'] is! String) ||
@@ -163,6 +167,7 @@ class RehabAnalytics {
         !json.containsKey('summary') ||
         (summary != null && summary is! Map<String, dynamic>) ||
         (thigh != null && thigh is! Map<String, dynamic>) ||
+        (gait != null && gait is! Map<String, dynamic>) ||
         (json['heel_zero'] != null &&
             json['heel_zero'] is! Map<String, dynamic>)) {
       throw const FormatException('Invalid rehab analytics');
@@ -193,6 +198,9 @@ class RehabAnalytics {
       thigh: thigh == null
           ? null
           : ThighAnalytics.fromJson(thigh as Map<String, dynamic>),
+      gait: gait == null
+          ? null
+          : GaitAnalytics.fromJson(gait as Map<String, dynamic>),
     );
   }
 
@@ -214,6 +222,7 @@ class RehabAnalytics {
     heelZero: heelZero,
     summary: value,
     thigh: thigh,
+    gait: gait,
   );
 
   RehabAnalytics _unavailable(String reason) => RehabAnalytics._(
@@ -222,6 +231,7 @@ class RehabAnalytics {
     progress: 0,
     summary: summary,
     thigh: thigh?.unavailable(reason),
+    gait: gait?.unavailable(reason),
   );
 }
 
@@ -342,6 +352,7 @@ class WearableConnection extends ChangeNotifier {
   SensorSample? get latest => _latest;
   RehabAnalytics? get analytics => _analytics;
   ThighAnalytics? get thigh => _analytics?.thigh;
+  GaitAnalytics? get gait => _analytics?.gait;
   bool get commandPending => _commandPending || _disconnecting != null;
   String? get commandError => _commandError;
   List<HeelPoint> get history => List.unmodifiable(_history);
@@ -367,7 +378,7 @@ class WearableConnection extends ChangeNotifier {
     _commandError = null;
     await _subscription?.cancel();
     if (_disposed || generation != _generation) return;
-    _setStatus(WearableStatus.connecting, 'Connecting to REHAB-WEARABLE…');
+    _setStatus(WearableStatus.connecting, 'Connecting to REHAB…');
     _subscription = events.receiveBroadcastStream().listen(
       (event) {
         if (!_disposed && generation == _generation) _handleEvent(event);
@@ -515,7 +526,7 @@ class WearableConnection extends ChangeNotifier {
     WearableStatus.reconnecting => 'Readings stopped. Reconnecting…',
     WearableStatus.disconnected =>
       'Wearable disconnected. Connect to try again.',
-    WearableStatus.connecting => 'Connecting to REHAB-WEARABLE…',
+    WearableStatus.connecting => 'Connecting to REHAB…',
     WearableStatus.live => 'Receiving live sensor readings',
     _ => 'Check the wearable connection and retry.',
   };
@@ -588,7 +599,7 @@ class WearableConnection extends ChangeNotifier {
       if (_disposed || generation != _generation) return;
       _setStatus(
         WearableStatus.error,
-        'Open Wi-Fi settings on your phone and join REHAB-WEARABLE.',
+        'Open Wi-Fi settings on your phone and join REHAB.',
       );
     } on MissingPluginException {
       if (_disposed || generation != _generation) return;

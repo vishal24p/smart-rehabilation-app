@@ -176,6 +176,47 @@ void main() {
     );
   }
 
+  testWidgets('interrupted zero can restart on the same exercise page', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await owner.start();
+      await connection.connect();
+      await send(thigh('idle'));
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: WorkoutSessionScreen(controller: owner)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Squat'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Start exercise'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Start exercise'));
+    });
+    await tester.pump();
+    expect(owner.hasAttempt, isTrue);
+    const reason =
+        'Thigh readings unavailable for 10 seconds; set session zero again.';
+    await tester.runAsync(() => send(thigh('interrupted', reason: reason)));
+    await tester.pumpAndSettle();
+    expect(owner.hasAttempt, isFalse);
+    expect(find.text(reason), findsOneWidget);
+    expect(owner.record!.exercises, isEmpty);
+    await tester.ensureVisible(find.text('Start exercise'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Start exercise'));
+    });
+    await tester.pumpAndSettle();
+    expect(owner.hasAttempt, isTrue);
+    expect(
+      actions.where((action) => action == 'thigh_session_begin').length,
+      2,
+    );
+    expect(writes.length, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('backgrounding managed child persists interrupted result once', (
     tester,
   ) async {
@@ -207,6 +248,54 @@ void main() {
     expect(writes.length, 2);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets(
+    'short sample gap resumes active counting without restart or result save',
+    (tester) async {
+      await openActiveExercise(tester);
+      const reason =
+          'Readings paused; return upright and hold still to continue.';
+      await tester.runAsync(
+        () => send(thigh('active', reps: 1, reason: reason)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(reason), findsOneWidget);
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(find.text('Start exercise'), findsNothing);
+      expect(find.text('Return to session'), findsNothing);
+      expect(connection.thigh!.tiltDeg, isNull);
+      expect(connection.thigh!.result, isNull);
+      expect(connection.status, WearableStatus.live);
+      expect(owner.hasAttempt, isTrue);
+      expect(owner.record!.exercises, isEmpty);
+      expect(writes.length, 1);
+      expect(nativeStops, 0);
+
+      await tester.runAsync(
+        () => send(thigh('active', reps: 1)..['tilt_deg'] = 0.0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(reason), findsNothing);
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(connection.thigh!.reason, isNull);
+      expect(connection.thigh!.tiltDeg, 0);
+      expect(connection.thigh!.result, isNull);
+      expect(owner.hasAttempt, isTrue);
+      expect(owner.record!.exercises, isEmpty);
+      expect(writes.length, 1);
+      expect(nativeStops, 0);
+      expect(actions, ['thigh_session_begin']);
+      await tester.runAsync(() => send(thigh('ended', reps: 2, result: true)));
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 2'), findsOneWidget);
+      expect(owner.record!.exercises.single.result.outcome, 'target_reached');
+      expect(owner.record!.exercises.single.result.repetitions, 2);
+      expect(writes.length, 2);
+      expect(nativeStops, 0);
+      expect(actions, ['thigh_session_begin']);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets(
     'sample gap saves interrupted reps once while transport stays live',
