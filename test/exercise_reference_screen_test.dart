@@ -167,7 +167,7 @@ void main() {
       await tap(tester, 'Save reference');
       expect(records.single['reference_peak_deg'], 60);
       expect(records.single['bend_threshold_deg'], 60);
-      expect(records.single['upright_band_deg'], 9);
+      expect(records.single['upright_band_deg'], 10);
       expect(find.text('Reference saved'), findsOneWidget);
     },
   );

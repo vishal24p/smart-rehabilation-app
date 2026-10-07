@@ -54,6 +54,60 @@ class ThighRig:
 
 
 class ThighProcessorTest(unittest.TestCase):
+    def test_old_saved_band_accepts_ten_degree_return_for_both_exercises(self):
+        for exercise in ('squat', 'sit_to_stand'):
+            rig = ThighRig()
+            saved = reference(30)
+            saved['exercise_id'] = exercise
+            rig.processor.command('thigh_session_begin',
+                                  {'exercise_id': exercise, 'reference': saved})
+            rig.feed(seconds=3.1)
+            self.assertEqual(rig.processor.snapshot()['upright_band_deg'], 10)
+            rig.ramp(30)
+            rig.processor.tilt = 10.01
+            rig.processor._cycle(rig.t)
+            self.assertEqual(rig.processor.repetitions, 0)
+            rig.processor.tilt = 10
+            rig.processor._cycle(rig.t)
+            self.assertEqual(rig.processor.repetitions, 1)
+            rig.processor._cycle(rig.t)
+            self.assertEqual(rig.processor.repetitions, 1)
+            rig.processor.tilt = 20
+            rig.processor._cycle(rig.t)
+            rig.processor.tilt = 10
+            rig.processor._cycle(rig.t)
+            self.assertEqual(rig.processor.repetitions, 1)
+
+    def test_zero_allows_normal_sway_and_logged_acceleration_in_both_flows(self):
+        for recording in (False, True):
+            for magnitude in (1.0, 1.27):
+                rig = ThighRig()
+                rig.processor.command('thigh_reference_begin' if recording else 'thigh_session_begin',
+                                      {'exercise_id': 'squat', 'reference': reference()})
+                for index in range(61):
+                    sample = rig.sample()
+                    sway = math.radians(3 * math.sin(index * math.pi / 20))
+                    sample['thigh_accel'] = [magnitude * math.sin(sway), 0,
+                                             magnitude * math.cos(sway)]
+                    sample['thigh_gyro'] = [4 * math.cos(index * math.pi / 20), 0, 0]
+                    result = rig.processor.process(sample)
+                    if index < 60:
+                        self.assertEqual(result['state'], 'zeroing')
+                self.assertEqual(result['state'], 'recording' if recording else 'active')
+                self.assertEqual(result['zero_progress'], 1)
+                self.assertEqual(result['tilt_deg'], 0)
+
+    def test_zero_rejects_unusable_acceleration_after_broadening(self):
+        for magnitude in (0, 0.69, 1.41):
+            rig = ThighRig()
+            rig.processor.command('thigh_reference_begin', {'exercise_id': 'squat'})
+            rig.feed(seconds=1)
+            sample = rig.sample()
+            sample['thigh_accel'] = [0, 0, magnitude]
+            result = rig.processor.process(sample)
+            self.assertEqual(result['state'], 'zeroing')
+            self.assertEqual(result['zero_progress'], 0)
+
     def test_observed_full_depth_survives_short_loss_and_counts_fresh_return_once(self):
         for parent in (False, True):
             for missing in (False, True):

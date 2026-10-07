@@ -4,7 +4,7 @@ import math
 from statistics import mean, pstdev
 
 from rehab_session import (
-    STANDING_S, STANDING_COUNT, MAX_GAP_S, GYRO_NOISE_DPS, ACCEL_NOISE_G,
+    STANDING_S, STANDING_COUNT, MAX_GAP_S,
     GRAVITY_MIN_G, GRAVITY_MAX_G, FILTER_TAU_S, TRIAL_RETURN_DEG,
     ACCEL_DIVISOR, GYRO_DIVISOR,
 )
@@ -12,6 +12,10 @@ from rehab_session import (
 THIGH_ACTIONS = frozenset(('thigh_reference_begin', 'thigh_reference_finish',
                          'thigh_session_begin', 'thigh_session_end', 'thigh_cancel'))
 SENSOR_WAIT_S = 10.0
+# Zero tolerates body sway; keep motion-fusion gravity limits separate.
+ZERO_ACCEL_NOISE_G = 0.06
+ZERO_GYRO_NOISE_DPS = 6.0
+ZERO_GRAVITY_MIN_G, ZERO_GRAVITY_MAX_G = 0.70, 1.40
 
 
 def _display_tenths(angle):
@@ -62,7 +66,7 @@ class ThighProcessor:
         self.cycle_peak = 0.0
 
     def _upright_band(self):
-        return TRIAL_RETURN_DEG if self.reference is None else self.reference['upright_band_deg']
+        return TRIAL_RETURN_DEG
 
     def _at_reference_depth(self):
         # Match the positive angles shown to one decimal place in the app.
@@ -241,7 +245,8 @@ class ThighProcessor:
         self.waiting_for_sensor = False
         self.reason = 'Thigh acceleration clipped; using gyro estimate.' if accel_clipped else None
         if self.state == 'zeroing':
-            return self._zero(accel, gyro, gravity_valid, t)
+            return self._zero(accel, gyro,
+                              ZERO_GRAVITY_MIN_G <= magnitude <= ZERO_GRAVITY_MAX_G, t)
         if resumed:
             self.gravity = _unit(accel)
         else:
@@ -269,7 +274,7 @@ class ThighProcessor:
             return self._error('Stand still while setting session zero.')
         self.capture.append((t, accel, gyro))
         if any(pstdev(row[field][axis] for row in self.capture) > limit
-               for field, limit in ((1, ACCEL_NOISE_G), (2, GYRO_NOISE_DPS)) for axis in range(3)):
+               for field, limit in ((1, ZERO_ACCEL_NOISE_G), (2, ZERO_GYRO_NOISE_DPS)) for axis in range(3)):
             self.capture = [(t, accel, gyro)]
             self.zero_progress = 0.0
             return self._error('Movement detected; stand still to restart session zero.')

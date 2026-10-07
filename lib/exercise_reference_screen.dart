@@ -75,7 +75,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
       exerciseId: _exerciseId,
       peakDeg: peak,
       bendThresholdDeg: peak,
-      uprightBandDeg: (0.15 * peak).clamp(5.0, 10.0),
+      uprightBandDeg: 10.0,
       recordedAt: DateTime.now().toUtc().toIso8601String(),
     );
     try {
