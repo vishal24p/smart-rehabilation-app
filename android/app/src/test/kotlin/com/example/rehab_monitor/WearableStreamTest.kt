@@ -51,7 +51,7 @@ class WearableStreamTest {
             delay = { retried.countDown(); throw InterruptedException() },
             diagnostic = { diagnostics.add(it) })
         stream.start(); await(retried); stream.stop()
-        assertEquals(3000L, now)
+        assertEquals(10000L, now)
         assertTrue(diagnostics.any { it.contains("stale") && it.contains("accepted=0") })
         assertTrue(diagnostics.any { it.contains("SocketTimeoutException") })
     }
@@ -115,7 +115,7 @@ class WearableStreamTest {
             { if (it.contains("invalid_protocol")) done.countDown() }, clock = { now },
             diagnostic = { diagnostics.add(it) })
         stream.start(); await(done); stream.stop()
-        assertTrue(diagnostics.any { it.startsWith("stale") && it.contains("rejected=2") &&
+        assertTrue(diagnostics.any { it.startsWith("stale") && it.contains("rejected=9") &&
             it.contains("receive_idle_ms=0") && it.contains("read_wait_ms=1000") })
     }
 
@@ -124,11 +124,11 @@ class WearableStreamTest {
         val diagnostics = CopyOnWriteArrayList<String>()
         val failed = CountDownLatch(1)
         val stream = WearableStream({ TestSocket(ByteArrayInputStream("100,private\n".toByteArray())) },
-            { { now += 3001; null } }, { if (it.contains("invalid_protocol")) failed.countDown() },
+            { { now += 10001; null } }, { if (it.contains("invalid_protocol")) failed.countDown() },
             clock = { now }, diagnostic = { diagnostics.add(it) })
         stream.start(); await(failed); stream.stop()
-        assertTrue(diagnostics.any { it.startsWith("parse_timing") && it.contains("parse_ms=3001") })
-        assertTrue(diagnostics.any { it.startsWith("stale") && it.contains("receive_idle_ms=3001") })
+        assertTrue(diagnostics.any { it.startsWith("parse_timing") && it.contains("parse_ms=10001") })
+        assertTrue(diagnostics.any { it.startsWith("stale") && it.contains("receive_idle_ms=10001") })
         assertTrue(diagnostics.none { it.contains("private") })
     }
 
@@ -166,7 +166,7 @@ class WearableStreamTest {
                 clock = { now }, delay = { retried.countDown(); throw InterruptedException() })
             stream.start(); await(retried); stream.stop()
             assertTrue(events.any { it.contains("reconnecting") })
-            if (timeout) assertTrue(now >= 3000)
+            if (timeout) assertTrue(now >= 10000)
         }
     }
 
@@ -331,7 +331,7 @@ class WearableStreamTest {
             override fun read() = throw UnsupportedOperationException()
             override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
                 if (reads == 2) return -1
-                if (reads++ == 1) now = 3001
+                if (reads++ == 1) now = 10000
                 val chunk = if (reads == 1) "frame\nframe".toByteArray() else "\n".toByteArray()
                 chunk.copyInto(bytes, offset)
                 return chunk.size
@@ -341,5 +341,34 @@ class WearableStreamTest {
             clock = { now }, delay = { retried.countDown(); throw InterruptedException() })
         stream.start(); await(retried); stream.stop()
         assertEquals(1, parsed)
+    }
+
+    @Test fun valid_frame_before_ten_seconds_recovers_without_interrupting() {
+        var now = 0L
+        var reads = 0
+        val diagnostics = CopyOnWriteArrayList<String>()
+        val events = CopyOnWriteArrayList<String>()
+        val retried = CountDownLatch(1)
+        var interrupts = 0
+        val input = object : InputStream() {
+            override fun read() = throw UnsupportedOperationException()
+            override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                if (++reads in 2..10) { now += 1000; throw SocketTimeoutException() }
+                if (reads > 11) return -1
+                if (reads == 11) now = 9999
+                val row = "frame\n".toByteArray()
+                row.copyInto(bytes, offset)
+                return row.size
+            }
+        }
+        val stream = WearableStream({ TestSocket(input) }, { { sample } }, { events.add(it) },
+            clock = { now }, delay = { retried.countDown(); throw InterruptedException() },
+            interruptSession = { interrupts++ }, diagnostic = { diagnostics.add(it) })
+        stream.start(); await(retried); stream.stop()
+        assertEquals(2, events.count { it.contains("\"sample\"") })
+        assertEquals(1, interrupts) // Only the later EOF interrupts the session.
+        assertEquals(1, diagnostics.count { it.startsWith("readings_waiting") })
+        assertEquals(1, diagnostics.count { it.startsWith("readings_resumed") })
+        assertTrue(diagnostics.none { it.startsWith("stale") })
     }
 }

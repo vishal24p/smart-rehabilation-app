@@ -50,6 +50,9 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     private var networkRetry = 0
     private var wifiDiagnostics: BroadcastReceiver? = null
     private val diagnosticFile = File(activity.filesDir, "wearable-connection.log")
+    private var thighReadingsAvailable: Boolean? = null
+    private var thighDiagnostic: Pair<String, String>? = null
+    private var lastThighDeviceTime: Long? = null
     private fun diagnostic(message: String) {
         if (!BuildConfig.DEBUG) return
         val line = message.take(1024).replace('\n', ' ').replace('\r', ' ')
@@ -58,6 +61,32 @@ class WearableConnection(private val activity: Activity, private val event: (Str
             synchronized(diagnosticFile) {
                 if (diagnosticFile.length() > 64 * 1024) diagnosticFile.writeText("Earlier diagnostics rotated.\n")
                 diagnosticFile.appendText("${System.currentTimeMillis()} $line\n")
+            }
+        }
+    }
+
+    private fun traceThigh(payload: String, sample: Boolean) {
+        if (!BuildConfig.DEBUG) return
+        runCatching {
+            val json = JSONObject(payload)
+            val deviceTime = if (sample) json.optLong("time_us") else null
+            val gap = deviceTime?.let { current -> lastThighDeviceTime?.let { current - it } }
+            if (sample) {
+                val available = !json.isNull("thigh_accel") && !json.isNull("thigh_gyro")
+                if (available != thighReadingsAvailable) {
+                    diagnostic("thigh_readings available=$available device_us=$deviceTime device_gap_us=$gap")
+                    thighReadingsAvailable = available
+                }
+                lastThighDeviceTime = deviceTime
+            }
+            val snapshot = if (sample) json.optJSONObject("analytics") else json
+            val thigh = snapshot?.optJSONObject("thigh") ?: return@runCatching
+            val state = thigh.optString("state")
+            val reason = if (thigh.isNull("reason")) "none" else thigh.optString("reason")
+            val current = state to reason
+            if (current != thighDiagnostic) {
+                diagnostic("thigh_transition previous=${thighDiagnostic?.first} state=$state reason=$reason device_us=$deviceTime device_gap_us=$gap zero_progress=${thigh.optDouble("zero_progress")} repetitions=${thigh.optInt("repetitions")}")
+                thighDiagnostic = current
             }
         }
     }
@@ -270,7 +299,11 @@ class WearableConnection(private val activity: Activity, private val event: (Str
             return
         }
         val token = generation
+        val started = SystemClock.elapsedRealtime()
+        diagnostic("session_command_begin action=${command.first} generation=$token")
         queue.command(command.first, command.second) { result ->
+            val reason = result.exceptionOrNull()?.javaClass?.simpleName ?: "none"
+            diagnostic("session_command_end action=${command.first} success=${result.isSuccess} error=$reason duration_ms=${SystemClock.elapsedRealtime() - started} generation=$token")
             if (!active || token != generation || queue !== processing) {
                 completion(Result.failure(RehabProcessing.UnavailableException("Session connection changed. Retry the command.")))
             } else {
@@ -358,13 +391,15 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                     throw error
                 }
             }
-            override fun parse(line: String): String? = try { parser!!.callAttr("process_line", line)?.toString() }
+            override fun parse(line: String): String? = try {
+                parser!!.callAttr("process_line", line)?.toString()?.also { traceThigh(it, true) }
+            }
                 catch (error: PyException) { throw WearableStream.ProtocolException(error.message ?: "Invalid CSV header") }
             override fun command(action: String, config: Map<*, *>?): String {
                 val pythonConfig = config?.let { json.callAttr("loads", JSONObject(it).toString()) }
-                return encode(session.callAttr("command", action, pythonConfig))
+                return encode(session.callAttr("command", action, pythonConfig)).also { traceThigh(it, false) }
             }
-            override fun interrupt(reason: String) = encode(session.callAttr("interrupt", reason))
+            override fun interrupt(reason: String) = encode(session.callAttr("interrupt", reason)).also { traceThigh(it, false) }
             override fun snapshot() = encode(session.callAttr("snapshot"))
         }
     }

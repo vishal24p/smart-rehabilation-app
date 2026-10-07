@@ -45,6 +45,41 @@ class WearableRestoreDeviceTest : AndroidTestCase() {
 
 @Suppress("DEPRECATION")
 class WearableRecoveryDeviceTest : ActivityInstrumentationTestCase2<MainActivity>(MainActivity::class.java) {
+    fun testThighDiagnosticsOnlyLogAvailabilityAndStateChanges() {
+        val screen = activity
+        val file = File(screen.filesDir, "wearable-connection.log")
+        val saved = if (file.exists()) file.readBytes() else null
+        val trace = WearableConnection::class.java.getDeclaredMethod("traceThigh", String::class.java,
+            Boolean::class.javaPrimitiveType).apply { isAccessible = true }
+        try {
+            instrumentation.runOnMainSync {
+                val connection = WearableConnection(screen) {}
+                file.writeText("")
+                fun sample(time: Long, available: Boolean, reason: String? = null) = JSONObject()
+                    .put("time_us", time)
+                    .put("thigh_accel", if (available) org.json.JSONArray(listOf(0, 0, 1)) else JSONObject.NULL)
+                    .put("thigh_gyro", if (available) org.json.JSONArray(listOf(0, 0, 0)) else JSONObject.NULL)
+                    .put("analytics", JSONObject().put("thigh", JSONObject()
+                        .put("state", "active").put("reason", reason ?: JSONObject.NULL).put("zero_progress", 1.0)
+                        .put("repetitions", 2))).toString()
+                for (time in 0L..40000L step 20000L) trace.invoke(connection, sample(time, true), true)
+                for (time in 60000L..100000L step 20000L) {
+                    trace.invoke(connection, sample(time, false, "Waiting for thigh readings."), true)
+                }
+                trace.invoke(connection, sample(120000, true), true)
+                val lines = file.readLines()
+                assertEquals(3, lines.count { it.contains("thigh_readings ") })
+                assertEquals(3, lines.count { it.contains("thigh_transition ") })
+                assertTrue(lines.any { it.contains("available=false device_us=60000 device_gap_us=20000") })
+                assertTrue(lines.any { it.contains("reason=Waiting for thigh readings.") && it.contains("repetitions=2") })
+                assertTrue(lines.filter { it.contains("thigh_transition ") }.all { it.contains("zero_progress=1.0") })
+                assertFalse(lines.any { it.contains("thigh_accel") || it.contains("thigh_gyro") })
+            }
+        } finally {
+            if (saved != null) file.writeBytes(saved) else file.delete()
+        }
+    }
+
     fun testDiagnosticsAreBoundedAndReceiverStopsWithConnection() {
         val screen = activity
         val file = File(screen.filesDir, "wearable-connection.log")

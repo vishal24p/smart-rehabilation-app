@@ -113,10 +113,16 @@ class WearableStream(
         var lastAnomaly: Long? = null
         var lastReceived = lastValid
         var readWaitMs = 0L
+        var waiting = false
         val sampleTimestamp = diagnostic?.let { Regex("\"time_us\"\\s*:\\s*(\\d+)") }
         val csvTimestamp = diagnostic?.let { Regex("[+-]?[0-9]+") }
         fun checkDeadline() {
-            if (clock() - lastValid >= 3000) {
+            val idleMs = clock() - lastValid
+            if (idleMs >= 1000 && !waiting) {
+                waiting = true
+                diagnose("readings_waiting accepted=$accepted rejected=$rejected accepted_gap_ms=$idleMs deadline_ms=10000")
+            }
+            if (idleMs >= 10000) {
                 if (diagnostic != null) diagnose("stale accepted=$accepted rejected=$rejected last_device_us=$lastDeviceTime accepted_gap_ms=${clock() - lastValid} receive_idle_ms=${clock() - lastReceived} read_wait_ms=$readWaitMs")
                 if (receivedFrames && !receivedValid) throw ProtocolException("No valid samples")
                 throw SocketTimeoutException("Sensor readings stale")
@@ -146,6 +152,10 @@ class WearableStream(
                     val sample = parse(line)
                     val parseMs = if (diagnostic != null) clock() - parseStart else 0
                     if (sample != null) {
+                        if (waiting) {
+                            diagnose("readings_resumed accepted_gap_ms=${clock() - lastValid}")
+                            waiting = false
+                        }
                         if (diagnostic != null) {
                             accepted++
                             val deviceTime = sampleTimestamp!!.find(sample)?.groupValues?.get(1)?.toLongOrNull()
