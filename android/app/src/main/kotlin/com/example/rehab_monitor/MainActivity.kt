@@ -27,10 +27,14 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "rehab/wearable")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "getExerciseReferences", "saveExerciseReference" -> referenceWorker.execute {
+                    "getExerciseReferences", "saveExerciseReference", "getGaitReference", "saveGaitReference" -> referenceWorker.execute {
                         val response = runCatching {
-                            if (call.method == "getExerciseReferences") references.load()
-                            else references.save(call.arguments)
+                            when (call.method) {
+                                "getExerciseReferences" -> references.load()
+                                "saveExerciseReference" -> references.save(call.arguments)
+                                "getGaitReference" -> references.loadGait()
+                                else -> references.saveGait(call.arguments)
+                            }
                         }
                         runOnUiThread {
                             response.fold(

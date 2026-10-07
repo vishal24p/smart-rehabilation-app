@@ -34,7 +34,9 @@ def _gravity_tilt(accel: list, axis: dict) -> float:
 class SessionProcessor:
     def __init__(self):
         from thigh_session import ThighProcessor
+        from gait_session import GaitProcessor
         self.thigh = ThighProcessor()
+        self.gait = GaitProcessor()
         self.state, self.reason, self.progress = 'setup', None, 0.0
         self.config = None
         self.summary = None
@@ -82,6 +84,10 @@ class SessionProcessor:
     def command(self, action: str, config: dict | None = None) -> dict:
         zero_capture = action == 'heel_zero'
         from thigh_session import THIGH_ACTIONS
+        from gait_session import GAIT_ACTIONS
+        if action in GAIT_ACTIONS:
+            self.gait.command(action, config)
+            return self.snapshot()
         if action in THIGH_ACTIONS:
             self.thigh.command(action, config)
             return self.snapshot()
@@ -219,6 +225,7 @@ class SessionProcessor:
         saved_zero = self.heel_zero
         if interrupt_thigh:
             self.thigh.interrupt(reason)
+        self.gait.interrupt(reason)
         active = self.state == 'active'
         if active:
             self._freeze(True)
@@ -271,6 +278,7 @@ class SessionProcessor:
                 'heel_share_reason': self.heel_share_reason,
                 'heel_zero': self.heel_zero,
                 'thigh': self.thigh.snapshot(),
+                'gait': self.gait.snapshot(),
                 'summary': None if self.summary is None else {
                     **self.summary, 'cycle_times_s': list(self.summary['cycle_times_s'])}}
 
@@ -288,6 +296,7 @@ class SessionProcessor:
             return self.snapshot()
         dt = 0.0 if self.last_t is None else (t - self.last_t)/1e6
         self.last_t = t
+        self.gait.process(sample)
         self.heel_saturated = self._heel_is_saturated('right', sample['fsr'])
         self._contact(sample['fsr'], t)
         left = sample.get('fsr_left')

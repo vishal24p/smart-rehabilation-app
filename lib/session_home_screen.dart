@@ -5,6 +5,7 @@ import 'exercise_reference.dart';
 import 'wearable_connection.dart';
 import 'workout_session.dart';
 import 'workout_session_screen.dart';
+import 'live_sensor_screen.dart';
 
 class SessionHomeScreen extends StatefulWidget {
   const SessionHomeScreen({
@@ -279,6 +280,20 @@ class _SessionHomeScreenState extends State<SessionHomeScreen> {
                         label: Text(
                           _starting ? 'Starting session…' : 'Start session',
                         ),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.tonalIcon(
+                        onPressed: _starting
+                            ? null
+                            : () => Navigator.of(context).push<void>(
+                                MaterialPageRoute(
+                                  builder: (_) => const LiveSensorScreen(
+                                    exerciseId: 'gait',
+                                  ),
+                                ),
+                              ),
+                        icon: const Icon(Icons.directions_walk_rounded),
+                        label: const Text('Gait analysis'),
                       ),
                       if (_startError != null) ...[
                         const SizedBox(height: 12),

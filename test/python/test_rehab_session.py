@@ -79,6 +79,37 @@ class Rig:
         return self.feed(seconds=0.5)
 
 
+class CombinedMotionTest(unittest.TestCase):
+    def test_gap_interrupts_gait_but_preserves_reached_thigh_depth(self):
+        from test_gait_session import GaitRig
+        from test_thigh_session import reference
+
+        processor = SessionProcessor()
+        rig = GaitRig(processor)
+        rig.calibrate()
+        processor.command('thigh_session_begin',
+                          {'exercise_id': 'squat', 'reference': reference()})
+        rig.feed(900, 900, seconds=3.1)
+        rig.begin()
+        for angle in range(1, 61):
+            radians = math.radians(angle)
+            rig.feed(900, 900, seconds=.02,
+                     thigh_accel=[math.sin(radians), 0, math.cos(radians)],
+                     thigh_gyro=[0, -50, 0])
+        self.assertEqual(processor.thigh.snapshot()['rep_phase'], 'depth_reached')
+        self.assertEqual(processor.gait.state, 'recording')
+
+        rig.t += 500_000
+        rig.feed(900, 900, seconds=.02)
+        snapshot = processor.snapshot()
+        self.assertEqual(snapshot['gait']['state'], 'interrupted')
+        self.assertTrue(snapshot['gait']['summary']['interrupted'])
+        self.assertEqual(snapshot['thigh']['state'], 'active')
+        self.assertEqual(snapshot['thigh']['repetitions'], 1)
+        rig.feed(900, 900, seconds=.5)
+        self.assertEqual(processor.thigh.repetitions, 1)
+
+
 class DualHeelTest(unittest.TestCase):
     def setUp(self):
         self.processor = SessionProcessor()
@@ -706,6 +737,16 @@ class QualityBoundaryTest(unittest.TestCase):
 
 
 class CommandTest(unittest.TestCase):
+    def test_gait_command_routing_does_not_change_knee_or_thigh_setup(self):
+        from test_gait_session import CONFIG
+        processor = SessionProcessor()
+        before = processor.snapshot()
+        result = processor.command('gait_configure', CONFIG)
+        self.assertEqual(result['state'], before['state'])
+        self.assertEqual(result['thigh'], before['thigh'])
+        self.assertIsNotNone(processor.gait.config)
+        self.assertIsNone(processor.config)
+
     def test_rejected_commands_preserve_calibrated_active_state(self):
         rig = Rig()
         rig.calibration()

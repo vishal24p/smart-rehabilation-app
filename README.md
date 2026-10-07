@@ -133,14 +133,19 @@ time_us,thigh_ax,thigh_ay,thigh_az,thigh_gx,thigh_gy,thigh_gz,shin_ax,shin_ay,sh
 
 Thigh MPU6050: `0x69`; shin: `0x68`. Timestamp is unsigned 32-bit microseconds,
 motion values signed 16-bit counts, and the parser accepts heel ADC 0..4095 for
-legacy ESP32 streams. CRLF is accepted. The supplied sketches in
-`firmware/esp8266_app_compatible/` and `firmware/mpu_axis_capture/` target ESP8266:
+legacy ESP32 streams. CRLF is accepted. The app-compatible sketch in
+`firmware/esp8266_app_compatible/` targets ESP8266:
 I2C SDA/SCL are GPIO4/5, heel-select outputs GPIO14/12, and shared ADC A0 is 0..1023.
-They send the named dual-heel format below; legacy ESP32 GPIO34/35 wiring is separate.
+It sends the named dual-heel format below; legacy ESP32 GPIO34/35 wiring is separate.
 Verify the actual firmware/header and MPU configuration before physical-unit use.
 The supplied ESP8266 sketches limit I2C clock stretching to 1 ms per bit. This
 reduces a stuck-clock failure path that otherwise can pause the two MPU reads
 for about 2.7 seconds. This setting does not apply to ESP32 firmware.
+
+`firmware/mpu_axis_capture/` is a separate standalone HTTP dashboard on port 80,
+with its own calibration, exercise controls and reports. It does not provide the
+TCP CSV stream required by the Android app. Use the app-compatible sender for
+Android sessions; keeping this HTTP sketch does not change the app protocol.
 
 For a Register/exercise interruption, Android debug builds log bounded diagnostics
 under `RehabWearable`. Device timestamp gaps, rejected CSV row counts, arrival/parse
@@ -281,3 +286,54 @@ in that Android folder.
 Python parser: `android/app/src/main/python/rehab_sensor.py`;
 calculations/session state: `android/app/src/main/python/rehab_session.py` and
 `android/app/src/main/python/thigh_session.py`.
+
+## Gait demonstration
+
+Open **Home → Gait analysis** in the Android app. The wearable must stream
+both MPU6050s (right thigh and right shin) plus the two forefoot FSRs (one under the ball of each foot) over the existing
+Wi-Fi connection. No trained model is required. The ESP8266 firmware must preserve the existing CSV and 0..4095 FSR signal contract.
+
+1. Connect and verify both IMUs use ±2g and ±250°/s. Select each signed hinge axis
+   and confirm right-leg mounting. Load each forefoot separately to verify the app's
+   left/right labels. The parser retains the previous side swap: match readings to physical sensors before confirming setup.
+2. Confirm gait setup, capture both unloaded forefeet, capture both loaded forefeet,
+   then complete standing calibration. Calibration never starts walking automatically.
+3. Enter the measured path distance and press **Start baseline walk**. Walk the path
+   and press **Stop walk** at its end. Complete at least ten same-foot stride intervals
+   on each side. Preview and explicitly save the baseline; replacing it requires an
+   explicit save. Failed captures or saves retain the previous reference.
+4. Enter the comparison path distance and press **Start comparison walk**, then
+   manually stop. Keep mounting and walking conditions consistent with the baseline.
+
+The app shows step counts, cadence, mean step/stride times, timing asymmetry,
+forefoot-loaded/unloaded duration proxies, right-leg angular excursion, trial average
+speed and approximate average step/stride lengths. Average speed includes pauses;
+lengths are distance/count estimates, with start/stop boundary error, not per-foot
+spatial measurements. Timing uses local forefoot loading events, not heel strikes. Forefoot unloading is not verified toe-off: true stance, swing and double
+support remain unavailable. Angular excursion is not a validated anatomical knee angle.
+
+Comparison uses cadence and mean left/right step and stride times. A deviation
+strictly greater than the editable tolerance (20% by default) gives **Outside reference**
+and names the triggering metric. Otherwise a usable comparison gives **Within reference**.
+Short, interrupted, malformed or unreliable trials give **Insufficient data** and
+cannot replace a baseline. A recorded baseline is not proof of healthy gait; these
+rules are demonstration settings, not normal/abnormal medical classification.
+
+Forefoot baselines use `gait_forefoot_timing_v1` and `right_thigh_shin_bilateral_forefeet`. Saved heel baselines are ignored without deletion; record a new baseline after moving sensors. An explicit successful save replaces the old singleton.
+
+One baseline persists locally in the existing Android reference database. Version 4
+adds missing gait, settings and workout tables while preserving data from version 1,
+both version-2 branch schemas and version 3. Automated synthetic
+tests verify calculations and recovery, but real walking accuracy still needs video-
+annotated recordings and physical validation.
+
+Gait calculations: `android/app/src/main/python/gait_session.py`; DTO/store:
+`lib/gait_analysis.dart`; trial UI: `lib/gait_session_panel.dart`.
+
+### ESP8266 shared-A0 integration
+
+The supplied firmware drives both FSR GPIOs as outputs, holding the inactive FSR LOW. With the shared-A0 wiring, that inactive FSR becomes an extra pressure-dependent path to ground and changes the selected sensor reading. The inactive pin must be high impedance (INPUT with no pull-up); only the selected pin drives HIGH. This is an engineering analysis of the supplied circuit, not a verified hardware result.
+
+The ESP8266 core may cache ADC results for at least 5 ms while Wi-Fi runs. The supplied 100-microsecond separation cannot ensure independent readings; allow more than 5 ms after selecting each sensor and physically verify separate responses. Its 10-bit readings must be normalized from 0..1023 to 0..4095 to preserve the app's saturation contract. Do not confirm FSR setup until this is done. The app's legacy parser swaps FSR sides: compensate the transmitted column order or physically verify the resulting labels before calibration.
+
+The user confirmed a bare ESP-12E module. Its ADC accepts 0..1 V and has no NodeMCU board divider. Do not use the pictured shared-A0 wiring as drawn: the selected 3.3 V GPIO can exceed the ADC limit. Add a suitable ADC protection divider before connecting A0; firmware timing and separate sensor response still require physical verification. [ESP8266 Arduino Core reference](https://arduino-esp8266.readthedocs.io/en/latest/reference.html#analog-input).
