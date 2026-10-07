@@ -54,6 +54,51 @@ class ThighRig:
 
 
 class ThighProcessorTest(unittest.TestCase):
+    def test_fresh_thigh_begin_ignores_precommand_gap_or_reset(self):
+        for parent in (False, True):
+            for recording in (False, True):
+                for exercise_id in ('squat', 'sit_to_stand'):
+                    for reset in (False, True):
+                        with self.subTest(parent=parent, recording=recording,
+                                          exercise_id=exercise_id, reset=reset):
+                            rig = ThighRig()
+                            if parent:
+                                rig.processor = SessionProcessor()
+                            rig.t = 1_000_000
+                            rig.processor.process(rig.sample())
+                            rig.t = 1 if reset else 3_702_000
+                            saved_reference = reference()
+                            saved_reference['exercise_id'] = exercise_id
+                            rig.processor.command(
+                                'thigh_reference_begin' if recording else 'thigh_session_begin',
+                                {'exercise_id': exercise_id, 'reference': saved_reference,
+                                 'rep_target': 10})
+                            snapshot = rig.processor.process(rig.sample())
+                            thigh = snapshot['thigh'] if parent else snapshot
+                            self.assertEqual(thigh['state'], 'zeroing')
+                            self.assertIsNone(thigh['reason'])
+                            snapshot = rig.feed(seconds=3.1)
+                            thigh = snapshot['thigh'] if parent else snapshot
+                            self.assertEqual(thigh['state'], 'recording' if recording else 'active')
+
+    def test_parent_long_gap_freezes_real_active_result(self):
+        rig = ThighRig()
+        rig.processor = SessionProcessor()
+        rig.processor.command('thigh_session_begin',
+                              {'exercise_id': 'squat', 'reference': reference(), 'rep_target': 10})
+        rig.feed(seconds=3.1)
+        rig.cycle(50)
+        duration = (rig.processor.thigh.last_t - rig.processor.thigh.active_start) / 1e6
+        rig.t += 2_652_000
+        snapshot = rig.processor.process(rig.sample())['thigh']
+        self.assertEqual(snapshot['state'], 'interrupted')
+        self.assertIn('2702 ms', snapshot['reason'])
+        frozen = snapshot['result']
+        self.assertEqual(frozen['repetitions'], 1)
+        self.assertEqual(frozen['outcome'], 'interrupted')
+        self.assertEqual(frozen['active_s'], duration)
+        self.assertEqual(rig.cycle(50)['thigh']['result'], frozen)
+
     def test_reference_short_gap_recovers_only_after_stable_upright_new_cycle(self):
         for exercise_id in ('squat', 'sit_to_stand'):
             for parent in (False, True):

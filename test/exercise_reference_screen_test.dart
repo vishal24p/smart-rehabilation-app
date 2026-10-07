@@ -137,6 +137,51 @@ void main() {
   );
 
   testWidgets(
+    'hard sample gap keeps reference and live connection ready for fresh recording',
+    (tester) async {
+      await showReference(tester);
+      await tap(tester, 'Re-record reference');
+      await snapshot(tester, 'recording', tilt: 35);
+      const reason = 'Device sample gap 2702 ms; repeat calibration.';
+      await snapshot(tester, 'interrupted', reason: reason);
+      expect(connection.status, WearableStatus.live);
+      expect(records.single['reference_peak_deg'], 45);
+      expect(find.text(reason), findsOneWidget);
+      expect(find.text('Finish recording'), findsNothing);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ExerciseReferenceScreen(
+            exerciseId: 'squat',
+            connection: connection,
+            store: store,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tap(tester, 'Re-record reference');
+      expect(
+        commands
+            .where(
+              (call) =>
+                  call.method == 'sessionCommand' &&
+                  (call.arguments as Map)['action'] == 'thigh_reference_begin',
+            )
+            .length,
+        2,
+      );
+      await snapshot(tester, 'zeroing', progress: .4);
+      await snapshot(tester, 'recording', tilt: 0, peak: 60);
+      await tap(tester, 'Finish recording');
+      expect(records.single['reference_peak_deg'], 45);
+      await snapshot(tester, 'reference_ready', peak: 60);
+      await tap(tester, 'Save reference');
+      expect(records.single['reference_peak_deg'], 60);
+      expect(connection.status, WearableStatus.live);
+      expect(commands.where((call) => call.method == 'disconnect'), isEmpty);
+    },
+  );
+
+  testWidgets(
     'cancelled recording preserves reference and route exit disconnects',
     (tester) async {
       await showReference(tester);

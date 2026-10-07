@@ -281,13 +281,11 @@ class SessionProcessor:
         if self.last_t is not None and (t < self.last_t or (t-self.last_t)/1e6 > MAX_GAP_S):
             reason = (f'Device timestamp reset ({self.last_t} to {t} us); repeat calibration.'
                       if t < self.last_t else f'Device sample gap {(t-self.last_t)/1000:.0f} ms; repeat calibration.')
-            if self.thigh.state == 'recording' and 0 < (t-self.last_t)/1e6 <= GRAVITY_TIMEOUT_S:
-                # Preserve independent reference recovery while invalidating legacy motion.
-                self.interrupt(reason, interrupt_thigh=False)
-                self.thigh.process(sample)
-                self.last_t = t
-                return self.snapshot()
-            return self.interrupt(reason)
+            # Each motion processor owns its capture clock and gap handling.
+            self.interrupt(reason, interrupt_thigh=False)
+            self.thigh.process(sample)
+            self.last_t = t
+            return self.snapshot()
         dt = 0.0 if self.last_t is None else (t - self.last_t)/1e6
         self.last_t = t
         self.heel_saturated = self._heel_is_saturated('right', sample['fsr'])

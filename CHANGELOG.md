@@ -15,6 +15,7 @@
 - Recover reference recording after short sample gaps and reject unstable zero captures.
 
 ### Fixed
+- Start reference recording and exercises without inheriting sample gaps from before the new capture; actual gaps during exercise still freeze completed results safely.
 - Correct left/right heel mapping and preserve compatibility with existing sensor headers.
 - Treat supplied dual-IMU failed-read zeros as unavailable motion data, preserving heel readings and preventing false repetitions.
 - Retain interrupted workout results when reconnect is requested during disconnect cleanup.

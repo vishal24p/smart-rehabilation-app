@@ -16,6 +16,7 @@ void main() {
   var time = 0;
   var failSave = false;
   var failEnd = false;
+  var nativeStops = 0;
   Map<String, dynamic>? disconnectSnapshot;
   late List<String> actions;
   late List<Map<String, dynamic>> writes;
@@ -32,10 +33,11 @@ void main() {
     int reps = 0,
     bool result = false,
     String outcome = 'target_reached',
+    String? reason,
   }) => {
     'state': state,
     'exercise_id': 'squat',
-    'reason': null,
+    'reason': reason,
     'zero_progress': 0.0,
     'tilt_deg': null,
     'reference_peak_deg': 50.0,
@@ -64,6 +66,7 @@ void main() {
     time = 0;
     failSave = false;
     failEnd = false;
+    nativeStops = 0;
     disconnectSnapshot = null;
     actions = [];
     writes = [];
@@ -94,8 +97,9 @@ void main() {
           );
         }
       }
-      if (call.method == 'disconnect' && disconnectSnapshot != null) {
-        return jsonEncode(disconnectSnapshot);
+      if (call.method == 'disconnect') {
+        nativeStops++;
+        if (disconnectSnapshot != null) return jsonEncode(disconnectSnapshot);
       }
       return null;
     });
@@ -203,6 +207,44 @@ void main() {
     expect(writes.length, 2);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets(
+    'sample gap saves interrupted reps once while transport stays live',
+    (tester) async {
+      await openActiveExercise(tester);
+      await tester.pumpWidget(
+        MaterialApp(home: WorkoutSessionScreen(controller: owner)),
+      );
+      await tester.pump();
+      expect(nativeStops, 0);
+      const reason = 'Device sample gap 2702 ms; repeat calibration.';
+      final interrupted = thigh(
+        'interrupted',
+        reps: 1,
+        result: true,
+        outcome: 'interrupted',
+        reason: reason,
+      );
+      await tester.runAsync(() => send(interrupted));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() => send(interrupted));
+      await tester.pumpAndSettle();
+      expect(connection.status, WearableStatus.live);
+      expect(nativeStops, 0);
+      expect(find.text(reason), findsOneWidget);
+      expect(owner.record!.exercises.single.result.repetitions, 1);
+      expect(owner.record!.exercises.single.result.outcome, 'interrupted');
+      expect(owner.hasAttempt, isFalse);
+      expect(writes.length, 2);
+      await tester.ensureVisible(find.text('Return to session'));
+      await tester.tap(find.text('Return to session'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose an exercise'), findsOneWidget);
+      expect(connection.status, WearableStatus.live);
+      expect(nativeStops, 0);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets(
     'target completion freezes UI and returns to next exercise or end session',
