@@ -75,6 +75,20 @@ class WearableRecoveryDeviceTest : ActivityInstrumentationTestCase2<MainActivity
                 assertTrue(lines.filter { it.contains("thigh_transition ") }.all { it.contains("zero_progress=1.0") })
                 assertTrue(lines.any { it.contains("accel=[0,0,1] gyro=[0,0,0]") })
                 assertFalse(lines.any { it.contains("thigh_accel") || it.contains("thigh_gyro") })
+                val cycle = JSONObject(sample(140000, true))
+                val thigh = cycle.getJSONObject("analytics").getJSONObject("thigh")
+                thigh.put("reference_peak_deg", 57.54).put("upright_band_deg", 8.6)
+                    .put("cycle_peak_deg", 57.51).put("tilt_deg", 57.51)
+                thigh.put("rep_phase", "depth_reached")
+                trace.invoke(connection, cycle.toString(), true)
+                trace.invoke(connection, cycle.toString(), true)
+                thigh.put("rep_phase", "standing").put("repetitions", 3)
+                    .put("last_completed_cycle_peak_deg", 57.51).put("tilt_deg", 0)
+                trace.invoke(connection, cycle.toString(), true)
+                val cycles = file.readLines().filter { it.contains("thigh_cycle ") }
+                assertEquals(3, cycles.size)
+                assertTrue(cycles.any { it.contains("phase=depth_reached") && it.contains("reference_peak_deg=57.54") })
+                assertTrue(cycles.any { it.contains("phase=standing repetitions=3") && it.contains("last_completed_cycle_peak_deg=57.51") })
             }
         } finally {
             if (saved != null) file.writeBytes(saved) else file.delete()

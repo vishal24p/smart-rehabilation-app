@@ -96,7 +96,19 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
             builder: (context, _) {
               final readings = _connection.latest;
               final analytics = _connection.analytics;
-              final leftShare = analytics?.heelShareLeft?.round();
+              final leftShare = analytics?.heelShareLeft;
+              final rightShare = analytics?.heelShareRight;
+              String? pressure;
+              if (readings != null && leftShare != null && rightShare != null) {
+                final larger = leftShare > rightShare ? leftShare : rightShare;
+                if (larger > 0) {
+                  pressure = (leftShare - rightShare).abs() <= .1 * larger
+                      ? 'Same'
+                      : leftShare > rightShare
+                      ? 'Left leg more'
+                      : 'Right leg more';
+                }
+              }
               final active = _connection.active;
               final status = switch (_connection.status) {
                 WearableStatus.idle => 'Ready to connect',
@@ -314,65 +326,19 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'Heel signal share',
+                    'Heel pressure',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final side in [
-                        ('Left', readings == null ? null : leftShare),
-                        (
-                          'Right',
-                          readings == null || leftShare == null
-                              ? null
-                              : 100 - leftShare,
-                        ),
-                      ])
-                        Expanded(
-                          child: Semantics(
-                            container: true,
-                            label:
-                                '${side.$1} ${side.$2 == null ? 'unavailable' : '${side.$2}%'}${_injuredLeg == side.$1.toLowerCase() ? ', injured leg' : ''}',
-                            excludeSemantics: true,
-                            child: Column(
-                              key: ValueKey(
-                                'heel-${side.$1.toLowerCase()}-share',
-                              ),
-                              children: [
-                                Text(
-                                  side.$1,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.headlineSmall,
-                                ),
-                                if (_injuredLeg == side.$1.toLowerCase())
-                                  const Text('Injured leg'),
-                                const SizedBox(height: 8),
-                                FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Text(
-                                    side.$2 == null ? '—' : '${side.$2}%',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.displayMedium,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  if (readings != null && leftShare != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      leftShare == 50
-                          ? 'Equal shares'
-                          : 'Higher signal: ${leftShare > 50 ? 'left' : 'right'}',
-                    ),
-                  ] else
+                  if (pressure != null)
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        pressure,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    )
+                  else
                     Text(
                       readings == null
                           ? 'No sensors connected'
@@ -383,9 +349,11 @@ class _LiveSensorScreenState extends State<LiveSensorScreen>
                                 'Capture unloaded sensors in Settings first',
                     ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Baseline-adjusted heel-signal share. Not body-weight percentage.',
-                  ),
+                  if (_injuredLeg != null)
+                    Text(
+                      '${_injuredLeg == 'left' ? 'Left' : 'Right'} injured leg',
+                    ),
+                  const Text('Based on heel sensor signals.'),
                   if (_settingsError != null)
                     TextButton(
                       onPressed: _loadSettings,

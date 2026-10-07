@@ -26,7 +26,8 @@ estimates, not clinical accuracy, diagnosis or recovery scores.
    **Start exercise**. The saved reference loads automatically. Stand still for
    the session-zero countdown, then exercise. Completed upright-lowered-upright
    cycles count only when they reach the saved depth and return. They show peak
-   thigh tilt and difference from the saved reference.
+   thigh tilt and difference from the saved reference. Depth comparisons use the
+   same one-decimal precision shown on screen.
 7. Reaching the repetition target automatically ends the exercise. **End exercise**
    saves completed repetitions with an ended-early outcome; partial cycles do not
    count. After saving, **Return to session** lets you repeat or choose another
@@ -143,6 +144,7 @@ For a Register/exercise interruption, Android debug builds log bounded diagnosti
 under `RehabWearable`. Device timestamp gaps, rejected CSV row counts, arrival/parse
 timing, socket failures, and explicit lifecycle stops are logged. State/reason
 changes also log thigh acceleration, gyro and tilt to explain sensor faults.
+Repetition-phase logs show depth reached, standing return, movement peak and count.
 These distinguish a sender pause from parser rejection or a
 connection stop. Release builds omit these diagnostics. Inspect them with
 `adb logcat -s RehabWearable:D '*:S'` while reproducing the issue.
@@ -188,8 +190,9 @@ for two seconds each. Heel capture does not require IMU axes or weight input.
 Python determines each channel's unloaded median, noise and loaded polarity.
 It computes `signal = max(0, (ADC - unloaded_baseline) * polarity)`, discarding
 signals within `max(5 ADC, 3 * calibration noise)` of zero. Left/right shares
-are `100 * signal / (left_signal + right_signal)` and total 100%; the display
-rounds one side and uses its complement for the other.
+are computed internally for comparison. The main display shows only **Left leg more**,
+**Right leg more**, or **Same** when the two signals differ by at most 10% of the
+larger signal. Missing or ineffective readings do not display Same.
 
 These are **relative heel ADC signal shares**, not calibrated force, pressure,
 body-weight distribution, or whole-leg loading. FSR response is nonlinear; equal
@@ -219,7 +222,10 @@ Timestamp rollback, repeated headers, TCP retry or a device gap over 250 ms also
 invalidates two-IMU calibration. Thigh reference recording and exercises recover
 from gaps over 250 ms and shorter than ten seconds with fresh readings visible
 immediately; the interrupted movement is discarded and standing re-arms counting. Timestamp resets and
-gaps of ten seconds or more interrupt. IMU clipping stops motion analytics;
+gaps of ten seconds or more interrupt. Gyro clipping interrupts thigh analytics;
+acceleration-only clipping during continuous movement skips accelerometer correction
+and keeps the gyro estimate. A new zero requires unsaturated readings, and recovery
+after a gap waits for unsaturated acceleration to establish the current pose.
 Temporary acceleration changes during movement do not hide thigh tilt; gyro
 integration continues while acceleration is unsuitable for correcting the estimate.
 Unavailable current metrics display an em dash; a frozen summary stays separate.

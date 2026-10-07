@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'android/app/src/main/python'))
-from thigh_session import ThighProcessor
+from thigh_session import ThighProcessor, _display_tenths
 from rehab_session import SessionProcessor
 
 
@@ -54,6 +54,131 @@ class ThighRig:
 
 
 class ThighProcessorTest(unittest.TestCase):
+    def test_depth_precision_matches_dart_positive_half_rounding(self):
+        for angle, tenths in ((57.15, 571), (57.25, 573), (57.45, 575),
+                               (57.51, 575), (57.54, 575)):
+            self.assertEqual(_display_tenths(angle), tenths)
+
+    def test_initial_accel_clip_and_any_gyro_clip_still_interrupt(self):
+        for recording in (False, True):
+            for initial_zero in (False, True):
+                for field in ('thigh_accel', 'thigh_gyro'):
+                    if not initial_zero and field == 'thigh_accel':
+                        continue
+                    rig = ThighRig()
+                    if initial_zero:
+                        rig.processor.command('thigh_reference_begin', {'exercise_id': 'squat'})
+                    else:
+                        rig.begin(recording)
+                    sample = rig.sample()
+                    sample[field][0] = 32767 / (16384 if field == 'thigh_accel' else 131)
+                    result = rig.processor.process(sample)
+                    self.assertEqual(result['state'], 'interrupted')
+                    self.assertIsNone(result['tilt_deg'])
+
+    def test_accel_rail_fallback_does_not_accept_out_of_range_vectors(self):
+        for field, value in (('thigh_accel', 2), ('thigh_accel', -2.01),
+                              ('thigh_gyro', 251), ('thigh_gyro', -251)):
+            rig = ThighRig()
+            rig.begin(False)
+            sample = rig.sample()
+            sample[field][0] = value
+            result = rig.processor.process(sample)
+            self.assertEqual(result['state'], 'interrupted')
+            self.assertIn('outside configured ranges', result['reason'])
+
+    def test_raw_and_scaled_negative_accel_rail_keep_gyro_estimate(self):
+        for raw in (False, True):
+            rig = ThighRig()
+            rig.begin(False)
+            sample = rig.sample(1)
+            sample['thigh_accel'][0] = -2
+            if raw:
+                sample['scaled'] = False
+                for field, divisor in (('thigh_accel', 16384), ('thigh_gyro', 131)):
+                    sample[field] = [round(value * divisor) for value in sample[field]]
+            result = rig.processor.process(sample)
+            self.assertEqual(result['state'], 'active')
+            self.assertAlmostEqual(result['tilt_deg'], 1, delta=0.01)
+            self.assertIn('using gyro', result['reason'])
+
+    def test_clipped_accel_wait_after_gap_cannot_extend_deadline(self):
+        rig = ThighRig()
+        rig.begin(False)
+        rig.cycle()
+        last_fresh = rig.processor.last_t
+        rig.t += 2_000_000
+        sample = rig.sample()
+        sample['thigh_accel'][2] = 32767 / 16384
+        result = rig.processor.process(sample)
+        self.assertEqual(result['state'], 'active')
+        self.assertEqual(rig.processor.last_t, last_fresh)
+        sample['time_us'] = last_fresh + 10_000_000
+        result = rig.processor.process(sample)
+        self.assertEqual(result['state'], 'interrupted')
+        self.assertEqual(result['result']['repetitions'], 1)
+
+    def test_acceleration_only_clip_uses_gyro_and_keeps_completed_rep(self):
+        for recording in (False, True):
+            rig = ThighRig()
+            rig.begin(recording)
+            for angle in range(1, 61):
+                sample = rig.sample(angle)
+                sample['thigh_accel'][2] = 32767 / 16384
+                result = rig.processor.process(sample)
+                self.assertEqual(result['state'], 'recording' if recording else 'active')
+                self.assertAlmostEqual(result['tilt_deg'], angle, delta=0.01)
+            result = rig.ramp(0)
+            if recording:
+                self.assertAlmostEqual(result['recorded_peak_deg'], 60, delta=0.01)
+            else:
+                self.assertEqual(result['repetitions'], 1)
+
+    def test_clipped_acceleration_after_gap_waits_for_valid_pose(self):
+        rig = ThighRig()
+        rig.begin(False)
+        rig.ramp(60)
+        last_fresh = rig.processor.last_t
+        rig.t += 2_000_000
+        sample = rig.sample(60)
+        sample['thigh_accel'][2] = 32767 / 16384
+        result = rig.processor.process(sample)
+        self.assertEqual(result['state'], 'active')
+        self.assertIsNone(result['tilt_deg'])
+        self.assertEqual(rig.processor.last_t, last_fresh)
+        result = rig.processor.process(rig.sample(60))
+        self.assertAlmostEqual(result['tilt_deg'], 60, delta=0.01)
+        self.assertEqual(result['rep_phase'], 'return_to_start')
+        self.assertEqual(rig.ramp(0)['repetitions'], 0)
+        self.assertEqual(rig.cycle()['repetitions'], 1)
+
+    def test_depth_comparison_matches_displayed_angle_precision(self):
+        for saved, peak, expected in ((57.54, 57.51, 1), (57.5, 57.4, 0),
+                                      (57.5, 57.46, 1), (57.5, 57.44, 0), (57.2, 57.15, 0)):
+            with self.subTest(saved=saved, peak=peak):
+                rig = ThighRig()
+                rig.processor.command('thigh_session_begin',
+                                      {'exercise_id': 'squat', 'reference': reference(saved)})
+                rig.feed(seconds=3.1)
+                self.assertEqual(rig.cycle(peak)['repetitions'], expected)
+
+    def test_cycle_diagnostics_remember_peak_until_return_and_report_rejection(self):
+        rig = ThighRig()
+        rig.begin(False)
+        self.assertEqual(rig.processor.snapshot()['rep_phase'], 'standing')
+        result = rig.ramp(45)
+        self.assertEqual(result['rep_phase'], 'moving')
+        result = rig.ramp(0)
+        self.assertEqual(result['rep_phase'], 'standing')
+        self.assertAlmostEqual(result['last_completed_cycle_peak_deg'], 45, delta=0.01)
+        self.assertIsNone(result['latest_peak_deg'])
+        self.assertEqual(result['repetitions'], 0)
+        self.assertEqual(rig.ramp(60)['rep_phase'], 'depth_reached')
+        self.assertEqual(rig.ramp(30)['rep_phase'], 'depth_reached')
+        result = rig.ramp(0)
+        self.assertEqual(result['repetitions'], 1)
+        self.assertAlmostEqual(result['last_completed_cycle_peak_deg'], 60, delta=0.01)
+
     def test_motion_without_trusted_gravity_keeps_visible_tilt(self):
         for recording in (True, False):
             rig = ThighRig()

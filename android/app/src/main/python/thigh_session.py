@@ -14,6 +14,11 @@ THIGH_ACTIONS = frozenset(('thigh_reference_begin', 'thigh_reference_finish',
 SENSOR_WAIT_S = 10.0
 
 
+def _display_tenths(angle):
+    numerator, denominator = float(angle).as_integer_ratio()
+    return (numerator * 20 + denominator) // (denominator * 2)
+
+
 def _unit(vector):
     magnitude = math.sqrt(sum(value*value for value in vector))
     return [value/magnitude for value in vector]
@@ -39,6 +44,7 @@ class ThighProcessor:
         self.state, self.exercise_id, self.reason = 'idle', None, None
         self.zero_progress = 0.0
         self.reference_peak = self.recorded_peak = self.latest_peak = None
+        self.last_completed_cycle_peak = None
         self.tilt = None
         self.repetitions = 0
         self.rep_target = self.active_start = self.result = None
@@ -55,8 +61,27 @@ class ThighProcessor:
         self.departure = None
         self.cycle_peak = 0.0
 
+    def _upright_band(self):
+        return TRIAL_RETURN_DEG if self.reference is None else self.reference['upright_band_deg']
+
+    def _at_reference_depth(self):
+        # Match the positive angles shown to one decimal place in the app.
+        return (self.reference_peak is not None
+                and _display_tenths(self.cycle_peak) >= _display_tenths(self.reference_peak))
+
     def snapshot(self):
+        if self.tilt is None:
+            phase = 'waiting'
+        elif not self.cycle_armed:
+            phase = 'return_to_start'
+        elif self.departure is None:
+            phase = 'standing'
+        else:
+            phase = 'depth_reached' if self._at_reference_depth() else 'moving'
         return {'state': self.state, 'exercise_id': self.exercise_id, 'reason': self.reason,
+                'rep_phase': phase, 'cycle_peak_deg': self.cycle_peak,
+                'last_completed_cycle_peak_deg': self.last_completed_cycle_peak,
+                'upright_band_deg': self._upright_band(),
                 'zero_progress': self.zero_progress,
                 'tilt_deg': self.tilt,
                 'reference_peak_deg': self.reference_peak, 'recorded_peak_deg': self.recorded_peak,
@@ -96,6 +121,7 @@ class ThighProcessor:
             self.reference = None if reference is None else dict(reference)
             self.reference_peak = None if reference is None else reference['reference_peak_deg']
             self.recorded_peak = self.latest_peak = self.tilt = None
+            self.last_completed_cycle_peak = None
             self.repetitions, self.zero_progress = 0, 0.0
             self.rep_target = config.get('rep_target') if action == 'thigh_session_begin' else None
             self.active_start = self.result = None
@@ -196,17 +222,21 @@ class ThighProcessor:
         scaled = sample.get('scaled', False)
         accel = [value/(1 if scaled else ACCEL_DIVISOR) for value in accel]
         gyro = [value/(1 if scaled else GYRO_DIVISOR) for value in gyro]
-        if (any(value <= -32768/ACCEL_DIVISOR or value >= 32767/ACCEL_DIVISOR for value in accel)
-                or any(value <= -32768/GYRO_DIVISOR or value >= 32767/GYRO_DIVISOR for value in gyro)):
+        if (any(value < -32768/ACCEL_DIVISOR or value > 32767/ACCEL_DIVISOR for value in accel)
+                or any(value < -32768/GYRO_DIVISOR or value > 32767/GYRO_DIVISOR for value in gyro)):
+            return self.interrupt('Thigh IMU readings outside configured ranges; check the wearable.')
+        accel_clipped = any(value <= -32768/ACCEL_DIVISOR or value >= 32767/ACCEL_DIVISOR for value in accel)
+        gyro_clipped = any(value <= -32768/GYRO_DIVISOR or value >= 32767/GYRO_DIVISOR for value in gyro)
+        if gyro_clipped or (accel_clipped and self.state == 'zeroing'):
             return self.interrupt('Thigh IMU clipped; check the wearable and set session zero again.')
         magnitude = math.sqrt(sum(value*value for value in accel))
-        gravity_valid = GRAVITY_MIN_G <= magnitude <= GRAVITY_MAX_G
-        if resumed and self.state != 'zeroing' and magnitude <= 1e-12:
+        gravity_valid = not accel_clipped and GRAVITY_MIN_G <= magnitude <= GRAVITY_MAX_G
+        if resumed and self.state != 'zeroing' and (accel_clipped or magnitude <= 1e-12):
             self.waiting_for_sensor = True
             return self._error('Waiting for a valid thigh acceleration reading.')
         self.last_t = t
         self.waiting_for_sensor = False
-        self.reason = None
+        self.reason = 'Thigh acceleration clipped; using gyro estimate.' if accel_clipped else None
         if self.state == 'zeroing':
             return self._zero(accel, gyro, gravity_valid, t)
         if resumed:
@@ -222,7 +252,7 @@ class ThighProcessor:
                 self.gravity = _unit(blended)
         dot = sum(a*b for a, b in zip(self.gravity, self.zero_gravity))
         self.tilt = math.degrees(math.acos(max(-1.0, min(1.0, dot))))
-        upright_band = TRIAL_RETURN_DEG if self.recording else self.reference['upright_band_deg']
+        upright_band = self._upright_band()
         if not self.cycle_armed:
             self.cycle_armed = self.tilt <= upright_band
         else:
@@ -257,7 +287,7 @@ class ThighProcessor:
     def _cycle(self, t):
         if self.recording and self.recorded_peak is not None:
             return
-        upright_band = TRIAL_RETURN_DEG if self.recording else self.reference['upright_band_deg']
+        upright_band = self._upright_band()
         if self.departure is None:
             if self.tilt > upright_band:
                 self.departure = t
@@ -265,10 +295,10 @@ class ThighProcessor:
             return
         self.cycle_peak = max(self.cycle_peak, self.tilt)
         if self.tilt <= upright_band:
+            self.last_completed_cycle_peak = self.cycle_peak
             if self.recording:
                 self.recorded_peak = self.cycle_peak
-            elif (self.cycle_peak >= self.reference_peak
-                  or math.isclose(self.cycle_peak, self.reference_peak)):
+            elif self._at_reference_depth():
                 self.latest_peak = self.cycle_peak
                 self.repetitions += 1
                 if self.rep_target is not None and self.repetitions >= self.rep_target:

@@ -52,6 +52,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
     private val diagnosticFile = File(activity.filesDir, "wearable-connection.log")
     private var thighReadingsAvailable: Boolean? = null
     private var thighDiagnostic: Pair<String, String>? = null
+    private var thighRepDiagnostic: Pair<String, Int>? = null
     private var lastThighDeviceTime: Long? = null
     private fun diagnostic(message: String) {
         if (!BuildConfig.DEBUG) return
@@ -88,6 +89,12 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 diagnostic("thigh_transition previous=${thighDiagnostic?.first} state=$state reason=$reason device_us=$deviceTime device_gap_us=$gap zero_progress=${thigh.optDouble("zero_progress")} repetitions=${thigh.optInt("repetitions")} tilt_deg=${thigh.opt("tilt_deg")} accel=${json.opt("thigh_accel")} gyro=${json.opt("thigh_gyro")} scaled=${json.opt("scaled")}")
                 thighDiagnostic = current
             }
+            val phase = thigh.optString("rep_phase", "none")
+            val rep = phase to thigh.optInt("repetitions")
+            if (state == "active" && rep != thighRepDiagnostic) {
+                diagnostic("thigh_cycle phase=$phase repetitions=${rep.second} tilt_deg=${thigh.opt("tilt_deg")} cycle_peak_deg=${thigh.opt("cycle_peak_deg")} last_completed_cycle_peak_deg=${thigh.opt("last_completed_cycle_peak_deg")} reference_peak_deg=${thigh.opt("reference_peak_deg")} upright_band_deg=${thigh.opt("upright_band_deg")} device_us=$deviceTime device_gap_us=$gap")
+            }
+            thighRepDiagnostic = if (state == "active") rep else null
         }
     }
 

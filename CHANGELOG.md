@@ -10,11 +10,13 @@
 - Use supplied ESP8266 and MPU axis-capture firmware with named heel channels and optional shin readings.
 
 ### Changed
+- Show only which leg has the higher heel signal, or Same when the signals differ by at most 10% of the larger value; remove percentages from the main pressure comparison.
 - Simplify patient navigation and live heel comparison, with accessible layouts for small screens and large text.
 - Label the Android app Gait Analysis.
 - Recover reference recording after short sample gaps and reject unstable zero captures.
 
 ### Fixed
+- Compare movement depth at the same one-decimal precision shown on screen; continue gyro-based thigh readings during acceleration-only saturation instead of interrupting the exercise.
 - Keep Android Wi-Fi approval requests open instead of cancelling after 20 seconds; stop repeated prompts after failure and reuse an already joined wearable network.
 - Limit I2C clock-stretch waits in the supplied ESP8266 firmware to reduce multi-second streaming stalls when the MPU bus fails.
 - Wait up to ten seconds for fresh thigh readings during registration and exercises, preserving completed repetitions and discarding partial movements; restart standing-zero countdowns without another tap.
@@ -26,6 +28,7 @@
 - Retain interrupted workout results when reconnect is requested during disconnect cleanup.
 
 ### Verification
+- Log repetition phases, completed movement peaks, saved depth and standing tolerance to explain uncounted movements.
 - Save bounded phone-local debug logs for Wi-Fi joining, authentication, IP setup, TCP connection and app disconnects.
 - Add local Android debug diagnostics for sample timing, rejected rows, socket failures and lifecycle stops.
 - Log missing/restored thigh readings, processor state/reason transitions with thigh vectors and tilt, and session command timing in the bounded phone-local log.
