@@ -176,6 +176,47 @@ void main() {
     );
   }
 
+  testWidgets('interrupted zero can restart on the same exercise page', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await owner.start();
+      await connection.connect();
+      await send(thigh('idle'));
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: WorkoutSessionScreen(controller: owner)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Squat'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Start exercise'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Start exercise'));
+    });
+    await tester.pump();
+    expect(owner.hasAttempt, isTrue);
+    const reason =
+        'Thigh readings unavailable for 10 seconds; set session zero again.';
+    await tester.runAsync(() => send(thigh('interrupted', reason: reason)));
+    await tester.pumpAndSettle();
+    expect(owner.hasAttempt, isFalse);
+    expect(find.text(reason), findsOneWidget);
+    expect(owner.record!.exercises, isEmpty);
+    await tester.ensureVisible(find.text('Start exercise'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Start exercise'));
+    });
+    await tester.pumpAndSettle();
+    expect(owner.hasAttempt, isTrue);
+    expect(
+      actions.where((action) => action == 'thigh_session_begin').length,
+      2,
+    );
+    expect(writes.length, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('backgrounding managed child persists interrupted result once', (
     tester,
   ) async {

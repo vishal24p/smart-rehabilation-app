@@ -54,6 +54,118 @@ class ThighRig:
 
 
 class ThighProcessorTest(unittest.TestCase):
+    def test_gap_under_ten_seconds_recovers_all_modes(self):
+        for parent in (False, True):
+            for mode in ('zeroing', 'recording', 'active'):
+                for gap_us in (1_352_000, 9_999_999):
+                    with self.subTest(parent=parent, mode=mode, gap_us=gap_us):
+                        rig = ThighRig()
+                        if parent:
+                            rig.processor = SessionProcessor()
+                        rig.processor.command(
+                            'thigh_session_begin' if mode == 'active' else 'thigh_reference_begin',
+                            {'exercise_id': 'squat', 'reference': reference(), 'rep_target': 3})
+                        rig.feed(seconds=1 if mode == 'zeroing' else 3.1)
+                        detector = rig.processor.thigh if parent else rig.processor
+                        if mode == 'active':
+                            rig.cycle(50)
+                        completed = detector.repetitions
+                        # Replace the next frame interval, not its elapsed arrival time.
+                        rig.t = detector.last_t + gap_us
+                        snapshot = rig.feed(seconds=0.05)
+                        thigh = snapshot['thigh'] if parent else snapshot
+                        self.assertEqual(thigh['state'], mode)
+                        self.assertIsNone(thigh['result'])
+                        self.assertEqual(thigh['repetitions'], completed)
+                        if mode == 'zeroing':
+                            self.assertEqual(thigh['zero_progress'], 0)
+                            rig.feed(seconds=3.1)
+                            self.assertEqual(detector.state, 'recording')
+                        else:
+                            rig.feed(seconds=0.5)
+                            self.assertIsNone(detector.reason)
+                            rig.cycle(50)
+                            if mode == 'active':
+                                self.assertEqual(detector.repetitions, completed + 1)
+                            else:
+                                self.assertIsNotNone(detector.recorded_peak)
+
+    def test_missing_readings_wait_then_resume_from_fresh_values(self):
+        for mode in ('zeroing', 'recording', 'active'):
+            with self.subTest(mode=mode):
+                rig = ThighRig()
+                rig.processor.command(
+                    'thigh_session_begin' if mode == 'active' else 'thigh_reference_begin',
+                    {'exercise_id': 'squat', 'reference': reference()})
+                rig.feed(seconds=1 if mode == 'zeroing' else 3.1)
+                if mode == 'active':
+                    rig.cycle(50)
+                completed = rig.processor.repetitions
+                if mode != 'zeroing':
+                    rig.ramp(45)
+                for _ in range(160):
+                    sample = rig.sample(45 if mode != 'zeroing' else 0)
+                    sample['thigh_accel'] = sample['thigh_gyro'] = None
+                    result = rig.processor.process(sample)
+                    self.assertEqual(result['state'], mode)
+                    self.assertIsNone(result['tilt_deg'])
+                    self.assertIsNone(result['result'])
+                    self.assertIn('10 seconds', result['reason'])
+                if mode == 'zeroing':
+                    rig.feed(seconds=3.1)
+                    self.assertEqual(rig.processor.state, 'recording')
+                else:
+                    rig.ramp(0)
+                    rig.feed(seconds=0.5)
+                    self.assertIsNone(rig.processor.reason)
+                    self.assertEqual(rig.processor.repetitions, completed)
+                    self.assertIsNone(rig.processor.recorded_peak)
+                    rig.cycle(50)
+                    self.assertEqual(rig.processor.repetitions, completed + (mode == 'active'))
+
+    def test_ten_second_loss_interrupts_and_keeps_completed_reps(self):
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                rig = ThighRig()
+                rig.begin(False)
+                rig.cycle(50)
+                duration = (rig.processor.last_t - rig.processor.active_start) / 1e6
+                sample = rig.sample()
+                sample['time_us'] = rig.processor.last_t + 10_000_000
+                if missing:
+                    sample['thigh_accel'] = sample['thigh_gyro'] = None
+                result = rig.processor.process(sample)
+                self.assertEqual(result['state'], 'interrupted')
+                self.assertEqual(result['result']['repetitions'], 1)
+                self.assertEqual(result['result']['active_s'], duration)
+
+    def test_missing_from_first_zero_sample_has_bounded_wait(self):
+        rig = ThighRig()
+        rig.processor.command('thigh_reference_begin', {'exercise_id': 'squat'})
+        for _ in range(200):
+            sample = rig.sample()
+            sample['thigh_accel'] = sample['thigh_gyro'] = None
+            result = rig.processor.process(sample)
+            self.assertEqual(result['state'], 'zeroing')
+            self.assertEqual(result['zero_progress'], 0)
+        sample = rig.sample()
+        sample['thigh_accel'] = sample['thigh_gyro'] = None
+        self.assertEqual(rig.processor.process(sample)['state'], 'interrupted')
+
+    def test_complete_short_cycle_counts_without_one_second_minimum(self):
+        for recording in (True, False):
+            with self.subTest(recording=recording):
+                rig = ThighRig()
+                rig.begin(recording)
+                rig.ramp(60, seconds=0.3)
+                rig.feed(60, seconds=0.35)
+                rig.ramp(0, seconds=0.3)
+                result = rig.feed(seconds=0.4)
+                if recording:
+                    self.assertIsNotNone(result['recorded_peak_deg'])
+                else:
+                    self.assertEqual(result['repetitions'], 1)
+
     def test_dynamic_gravity_uncertainty_recovers_without_recalibration(self):
         for recording in (True, False):
             with self.subTest(recording=recording):
@@ -206,10 +318,10 @@ class ThighProcessorTest(unittest.TestCase):
         rig.feed(seconds=3.1)
         rig.cycle(50)
         duration = (rig.processor.thigh.last_t - rig.processor.thigh.active_start) / 1e6
-        rig.t += 2_652_000
+        rig.t += 10_000_000
         snapshot = rig.processor.process(rig.sample())['thigh']
         self.assertEqual(snapshot['state'], 'interrupted')
-        self.assertIn('2702 ms', snapshot['reason'])
+        self.assertIn('10.1 seconds', snapshot['reason'])
         frozen = snapshot['result']
         self.assertEqual(frozen['repetitions'], 1)
         self.assertEqual(frozen['outcome'], 'interrupted')
@@ -261,11 +373,11 @@ class ThighProcessorTest(unittest.TestCase):
                     if failure == 'active':
                         rig.cycle(50)
                     sample = rig.sample()
-                    sample['time_us'] = 1 if failure == 'reset' else sample['time_us'] + 1_000_000
+                    sample['time_us'] = 1 if failure == 'reset' else sample['time_us'] + 10_000_000
                     snapshot = rig.processor.process(sample)
                     result = snapshot['thigh'] if parent else snapshot
                     self.assertEqual(result['state'], 'interrupted')
-                    self.assertIn('reset' if failure == 'reset' else 'ms', result['reason'])
+                    self.assertIn('reset' if failure == 'reset' else 'seconds', result['reason'])
                     if failure == 'active':
                         self.assertEqual(result['result']['repetitions'], 1)
                         self.assertEqual(result['result']['outcome'], 'interrupted')
@@ -518,10 +630,11 @@ class ThighProcessorTest(unittest.TestCase):
                     sample = rig.sample()
                     if failure == 'missing':
                         sample['thigh_accel'] = sample['thigh_gyro'] = None
+                        sample['time_us'] += 10_000_000
                     elif failure == 'clipped':
                         sample['thigh_gyro'][0] = 32767/131
                     else:
-                        sample['time_us'] += 1_000_000
+                        sample['time_us'] += 10_000_000
                     result = rig.processor.process(sample)
                 self.assertEqual(result['state'], 'interrupted')
                 self.assertIsNone(result['tilt_deg'])
@@ -541,6 +654,7 @@ class ThighProcessorTest(unittest.TestCase):
                     sample = rig.sample()
                     if failure == 'missing':
                         sample['thigh_accel'] = None
+                        sample['time_us'] += 10_000_000
                     elif failure == 'nonfinite':
                         sample['thigh_accel'][0] = float('nan')
                     elif failure == 'clipped':
@@ -548,7 +662,7 @@ class ThighProcessorTest(unittest.TestCase):
                     elif failure == 'reset':
                         sample['time_us'] = 1
                     else:
-                        sample['time_us'] += 1_000_000
+                        sample['time_us'] += 10_000_000
                     result = rig.processor.process(sample)
                     self.assertEqual(result['state'], 'interrupted')
                     self.assertIsNone(result['tilt_deg'])

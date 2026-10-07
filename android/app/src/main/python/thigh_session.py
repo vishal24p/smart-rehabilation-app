@@ -6,12 +6,13 @@ from statistics import mean, pstdev
 from rehab_session import (
     STANDING_S, STANDING_COUNT, MAX_GAP_S, GYRO_NOISE_DPS, ACCEL_NOISE_G,
     GRAVITY_MIN_G, GRAVITY_MAX_G, FILTER_TAU_S, GRAVITY_TIMEOUT_S,
-    TRIAL_MIN_DEG, TRIAL_RETURN_DEG, HOLD_S, MIN_CYCLE_S,
+    TRIAL_MIN_DEG, TRIAL_RETURN_DEG, HOLD_S,
     ACCEL_DIVISOR, GYRO_DIVISOR,
 )
 
 THIGH_ACTIONS = frozenset(('thigh_reference_begin', 'thigh_reference_finish',
                          'thigh_session_begin', 'thigh_session_end', 'thigh_cancel'))
+SENSOR_WAIT_S = 10.0
 
 
 def _unit(vector):
@@ -49,6 +50,7 @@ class ThighProcessor:
         self.gravity_t = None
         self.recording = False
         self.recovering_motion = False
+        self.waiting_for_sensor = False
         self._clear_cycle()
 
     def _clear_cycle(self):
@@ -105,6 +107,7 @@ class ThighProcessor:
             self.last_t = self.gravity_t = None
             self.recording = action == 'thigh_reference_begin'
             self.recovering_motion = False
+            self.waiting_for_sensor = False
             self._clear_cycle()
             self.state = 'zeroing'
         elif action == 'thigh_reference_finish':
@@ -153,6 +156,7 @@ class ThighProcessor:
         self.last_t = self.gravity_t = None
         self.zero_progress = 0.0
         self.recovering_motion = False
+        self.waiting_for_sensor = False
         self._clear_cycle()
         return self.snapshot()
 
@@ -165,9 +169,27 @@ class ThighProcessor:
         dt = 0 if self.last_t is None else (t-self.last_t)/1e6
         if dt < 0:
             return self.interrupt(f'Thigh timestamp reset ({self.last_t} to {t} us); set session zero again.')
+        if dt >= SENSOR_WAIT_S:
+            return self.interrupt(f'Thigh readings unavailable for {dt:.1f} seconds; check the sensor and retry.')
+        accel, gyro = sample.get('thigh_accel'), sample.get('thigh_gyro')
+        if accel is None or gyro is None:
+            # Keep the last fresh timestamp so repeated missing frames cannot extend the deadline.
+            if self.last_t is None:
+                self.last_t = t
+            self.waiting_for_sensor = True
+            self.capture = []
+            self.tilt = None
+            self._clear_cycle()
+            if self.state == 'zeroing':
+                self.zero_progress = 0.0
+            else:
+                self.recovering_motion = True
+            return self._error('Thigh IMU readings unavailable. Waiting up to 10 seconds for fresh readings.')
+        if self.waiting_for_sensor:
+            self.waiting_for_sensor = False
+            self.reason = ('Stand still to continue.' if self.state == 'zeroing'
+                           else 'Stand upright and hold still to continue.')
         if dt > MAX_GAP_S:
-            if dt > GRAVITY_TIMEOUT_S:
-                return self.interrupt(f'Thigh sample gap {dt*1000:.0f} ms; set session zero again.')
             # Retry the capture or movement without integrating missing time.
             self.capture = []
             self.tilt = None
@@ -179,9 +201,6 @@ class ThighProcessor:
                 self.recovering_motion = True
                 self.reason = 'Stand upright and hold still to continue.'
         self.last_t = t
-        accel, gyro = sample.get('thigh_accel'), sample.get('thigh_gyro')
-        if accel is None or gyro is None:
-            return self.interrupt('Thigh IMU readings unavailable; reconnect and set session zero again.')
         if (len(accel) != 3 or len(gyro) != 3
                 or any(type(value) not in (int, float) or not math.isfinite(value) for value in accel+gyro)):
             return self.interrupt('Invalid thigh IMU readings; set session zero again.')
@@ -289,7 +308,7 @@ class ThighProcessor:
             if self.return_since is None:
                 self.return_since = t
             elif (t-self.return_since)/1e6 >= HOLD_S:
-                if self.bend_confirmed and (self.return_since-self.departure)/1e6 >= MIN_CYCLE_S:
+                if self.bend_confirmed:
                     if self.recording:
                         self.recorded_peak = self.cycle_peak
                     else:

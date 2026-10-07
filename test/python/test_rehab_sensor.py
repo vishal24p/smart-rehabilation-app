@@ -67,10 +67,11 @@ class SensorParserTest(unittest.TestCase):
             sample = json.loads(parser.process_line(','.join(map(str, values))))
             rig.t += 50_000
         thigh = sample['analytics']['thigh']
-        self.assertEqual(thigh['state'], 'interrupted')
+        self.assertEqual(thigh['state'], 'active')
         self.assertEqual(thigh['repetitions'], 0)
-        self.assertEqual(thigh['result']['outcome'], 'interrupted')
-        self.assertEqual(thigh['result']['repetitions'], 0)
+        self.assertIsNone(thigh['result'])
+        self.assertIn('10 seconds', thigh['reason'])
+        self.assertIsNone(rig.processor.return_since)
         self.assertIsNone(sample['thigh_accel'])
         self.assertIsNone(sample['thigh_gyro'])
         self.assertEqual(sample['shin_accel'], [0, 0, 16384])

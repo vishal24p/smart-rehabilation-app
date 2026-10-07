@@ -111,6 +111,42 @@ void main() {
   }
 
   testWidgets(
+    'live missing thigh readings can disconnect and reconnect registration',
+    (tester) async {
+      await showReference(tester);
+      await tester.runAsync(
+        () => fixtures.emit(
+          Map<String, dynamic>.from(fixtures.sample(time: ++time))
+            ..['thigh_accel'] = null
+            ..['thigh_gyro'] = null,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(connection.status, WearableStatus.live);
+      await tester.ensureVisible(find.text('Disconnect wearable'));
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Disconnect wearable'));
+        await Future<void>.delayed(Duration.zero);
+      });
+      await tester.pumpAndSettle();
+      expect(commands.last.method, 'disconnect');
+      expect(records.single['reference_peak_deg'], 45);
+      expect(find.text('Connect wearable'), findsOneWidget);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Connect wearable'));
+        await Future<void>.delayed(Duration.zero);
+      });
+      await snapshot(tester, 'idle');
+      expect(connection.status, WearableStatus.live);
+      await tap(tester, 'Re-record reference');
+      expect(
+        (commands.last.arguments as Map)['action'],
+        'thigh_reference_begin',
+      );
+    },
+  );
+
+  testWidgets(
     'recording previews and saves deliberately; failed replacement preserves target',
     (tester) async {
       await showReference(tester);
@@ -330,7 +366,7 @@ void main() {
       expect(find.text('Captured range: —'), findsOneWidget);
       expect(
         find.text(
-          'Zero set. Bend at least 30°, pause briefly, then return standing.',
+          'Zero set. Bend at least 30°, pause briefly, then return standing and hold still briefly.',
         ),
         findsOneWidget,
       );

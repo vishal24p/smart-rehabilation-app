@@ -205,16 +205,19 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                   const SizedBox(height: 16),
                   Text(live ? 'Wearable connected' : _connection.message),
                   const SizedBox(height: 8),
-                  if (!live)
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(52),
-                      ),
-                      onPressed: _connection.active || pending
-                          ? null
-                          : () => _connection.connect(scaleConfirmed: true),
-                      child: const Text('Connect wearable'),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
                     ),
+                    onPressed: pending || (!live && _connection.active)
+                        ? null
+                        : () => live
+                              ? _connection.disconnect()
+                              : _connection.connect(scaleConfirmed: true),
+                    child: Text(
+                      live ? 'Disconnect wearable' : 'Connect wearable',
+                    ),
+                  ),
                   if (live && !available)
                     const Text('Thigh readings unavailable. Check the sensor.'),
                   const SizedBox(height: 16),
@@ -226,7 +229,7 @@ class _ExerciseReferenceScreenState extends State<ExerciseReferenceScreen>
                         liveRegion: true,
                         child: Text(
                           current?.recordedPeakDeg == null
-                              ? 'Zero set. Bend at least 30°, pause briefly, then return standing.'
+                              ? 'Zero set. Bend at least 30°, pause briefly, then return standing and hold still briefly.'
                               : finishReady
                               ? 'Movement captured. Ready to finish.'
                               : 'Movement captured. Return standing.',
