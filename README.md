@@ -43,11 +43,14 @@ from sit-to-stand, confirm chair contact, measure knee angle, or certify form.
 Inclination includes lateral tilt. Use consistent placement on the front thigh.
 Reference and exercise routes use ±2g/±250°/s, matching the supplied ESP8266 firmware.
 Each new capture starts its own sample clock. A gap before tapping Record or Start
-does not interrupt the new capture. Gaps up to one second discard the partial
+does not interrupt the new capture. Gaps shorter than ten seconds discard the partial
 repetition and pause counting until you return upright and hold still, then resume
 automatically with completed repetitions preserved. During standing zero, these
-gaps restart the countdown automatically. Longer gaps or a disconnect interrupt
-the attempt and require a fresh zero.
+gaps restart the countdown automatically. Missing thigh readings wait for fresh
+values for up to ten seconds, without counting movements during the loss.
+Ten seconds without fresh readings or a disconnect interrupts the attempt and
+requires a fresh zero. Completed repetitions remain saved. A complete bend and
+upright return need their brief holds, with no fixed one-second movement minimum.
 
 ## Phone setup
 
@@ -207,14 +210,15 @@ supplied wearable. Legacy parser acceptance up to 4095 does not change that rang
 Android 10–12 request Location permission (precise on Android 12); Android 13+ use
 Nearby Wi-Fi devices. No Wi-Fi scanning or location recording. Older phones may
 require Location services. Errors offer retry/settings. TCP uses selected Wi-Fi
-even when cellular is enabled. Live requires a valid sample; three seconds with
+even when cellular is enabled. Live requires a valid sample; ten seconds with
 no valid sample clears readings. Foreground retries use 1, 2, then 5-second delays.
 Timestamp restart clears graph history; Disconnect cancels retries/resources.
 Timestamp rollback, repeated headers, TCP retry or a device gap over 250 ms also
-invalidates calibration. During reference recording only, a gap over 250 ms and
-up to one second permits recovery after returning upright and holding still;
-the interrupted movement is discarded. Active exercises, timestamp resets, and
-longer gaps interrupt. IMU clipping or unreliable motion stops motion analytics.
+invalidates two-IMU calibration. Thigh reference recording and exercises recover
+from gaps over 250 ms and shorter than ten seconds after returning upright and
+holding still; the interrupted movement is discarded. Timestamp resets and
+longer gaps interrupt. IMU clipping stops motion analytics; temporary gravity
+uncertainty pauses thigh counting until stable upright readings return.
 Unavailable current metrics display an em dash; a frozen summary stays separate.
 The screen stays awake while the wearable connection is active; disconnect clears it.
 

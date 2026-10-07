@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.1.0.0] - 2026-10-07
+## [1.2.0.0] - 2026-10-07
 
 ### Added
 - Start grouped workout sessions, perform sequential exercises, and review saved sessions in the home calendar and history.
@@ -17,7 +17,9 @@
 ### Fixed
 - Keep Android Wi-Fi approval requests open instead of cancelling after 20 seconds; stop repeated prompts after failure and reuse an already joined wearable network.
 - Limit I2C clock-stretch waits in the supplied ESP8266 firmware to reduce multi-second streaming stalls when the MPU bus fails.
-- Automatically recover reference recording and exercises after sample gaps up to one second, preserving completed repetitions and discarding partial movements; restart standing-zero countdowns without another tap.
+- Wait up to ten seconds for fresh thigh readings during registration and exercises, preserving completed repetitions and discarding partial movements; restart standing-zero countdowns without another tap.
+- Allow complete bend-and-return movements without a fixed one-second duration requirement; retain brief bend and upright holds and sensor-quality checks.
+- Retry interrupted standing zero on the same exercise page and expose disconnect controls during live registration.
 - Start reference recording and exercises without inheriting sample gaps from before the new capture; longer gaps still freeze completed results safely.
 - Correct left/right heel mapping and preserve compatibility with existing sensor headers.
 - Treat supplied dual-IMU failed-read zeros as unavailable motion data, preserving heel readings and preventing false repetitions.
@@ -26,4 +28,5 @@
 ### Verification
 - Save bounded phone-local debug logs for Wi-Fi joining, authentication, IP setup, TCP connection and app disconnects.
 - Add local Android debug diagnostics for sample timing, rejected rows, socket failures and lifecycle stops.
+- Log missing/restored thigh readings, processor state/reason transitions and session command timing in the bounded phone-local log.
 - Expand automated checks for sensor processing, reference recovery, target results, persistence and workout lifecycle behavior.
