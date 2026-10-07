@@ -176,8 +176,8 @@ Thigh-only streams keep heel capture/comparison active, but display shin reading
 and knee metrics as unavailable. Existing shin-enabled streams retain their
 normal calibration and session flow. Named-header streams treat six-zero failed
 IMU reads as unavailable data for the affected board, preserving heel readings.
-A failed thigh read interrupts exercise counting and cannot complete a repetition
-from frozen tilt. Legacy headers keep their existing interpretation. Restoring
+A failed thigh read pauses exercise counting for up to ten seconds and cannot
+complete a repetition from frozen tilt. Legacy headers keep their interpretation. Restoring
 both IMUs requires fresh motion calibration.
 
 For optional legacy heel-contact calibration in **Sensors → Calibration & setup**,
@@ -217,8 +217,8 @@ Timestamp rollback, repeated headers, TCP retry or a device gap over 250 ms also
 invalidates two-IMU calibration. Thigh reference recording and exercises recover
 from gaps over 250 ms and shorter than ten seconds after returning upright and
 holding still; the interrupted movement is discarded. Timestamp resets and
-longer gaps interrupt. IMU clipping stops motion analytics; temporary gravity
-uncertainty pauses thigh counting until stable upright readings return.
+gaps of ten seconds or more interrupt. IMU clipping stops motion analytics;
+temporary gravity uncertainty pauses thigh counting until stable upright readings return.
 Unavailable current metrics display an em dash; a frozen summary stays separate.
 The screen stays awake while the wearable connection is active; disconnect clears it.
 
