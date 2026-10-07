@@ -60,7 +60,7 @@ during movement; no bend or return holds are required.
 
 1. Install the Android app using `flutter run` or the built debug APK.
 2. Power the wearable. Open **Sensors** and tap **Connect wearable**.
-3. Accept Android permission/Wi-Fi prompts. Expected Wi-Fi: `REHAB-WEARABLE`,
+3. Accept Android permission/Wi-Fi prompts. Expected Wi-Fi: `REHAB`,
    password `rehab1234`. It provides no internet; stay connected to it.
    On older Android versions, join through **Open Wi-Fi settings**, return and
    connect again.

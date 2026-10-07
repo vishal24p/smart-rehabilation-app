@@ -16,6 +16,7 @@
 - Recover reference recording after short sample gaps and reject unstable zero captures.
 
 ### Fixed
+- Connect to the ESP hotspot named REHAB, matching the user's uploaded firmware, including detection of an already joined network.
 - Retain an already observed full-depth movement during sensor gaps shorter than ten seconds, then count it once when fresh readings confirm standing; retain observed reference bends across brief loss too.
 - Compare movement depth at the same one-decimal precision shown on screen; continue gyro-based thigh readings during acceleration-only saturation instead of interrupting the exercise.
 - Keep Android Wi-Fi approval requests open instead of cancelling after 20 seconds; stop repeated prompts after failure and reuse an already joined wearable network.

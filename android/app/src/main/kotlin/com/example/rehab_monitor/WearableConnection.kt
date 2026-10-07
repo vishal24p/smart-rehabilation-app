@@ -139,7 +139,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         stoppedSnapshot = null
         processing = RehabProcessing({ pythonProcessor(scaleConfirmed) }, { main.post(it) })
         networkRetry = 0
-        status("connecting", "requesting_wifi", "Connecting to REHAB-WEARABLE…")
+        status("connecting", "requesting_wifi", "Connecting to REHAB…")
         val permissions = when {
             Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
             Build.VERSION.SDK_INT >= 31 -> arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -192,7 +192,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
             } else if (wifiNetworks.size == 1) wifi.connectionInfo?.ssid else null
         })
         if (joinedNetwork == null && Build.VERSION.SDK_INT >= 29) {
-            request.setNetworkSpecifier(WifiNetworkSpecifier.Builder().setSsid("REHAB-WEARABLE")
+            request.setNetworkSpecifier(WifiNetworkSpecifier.Builder().setSsid("REHAB")
                 .setWpa2Passphrase("rehab1234").build())
         }
         val observer = networkObserver(token, joinedNetwork)
@@ -203,7 +203,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
                 connectivity.registerNetworkCallback(request.build(), observer)
                 startStream(joinedNetwork, token)
             } else if (Build.VERSION.SDK_INT >= 29) connectivity.requestNetwork(request.build(), observer)
-            else fail("join_wifi", "Join REHAB-WEARABLE in Wi-Fi settings, then retry.")
+            else fail("join_wifi", "Join REHAB in Wi-Fi settings, then retry.")
         } catch (_: SecurityException) {
             fail("permission_denied", "Wi-Fi access was denied. Check permissions and retry.")
         } catch (_: RuntimeException) {
@@ -221,7 +221,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
             override fun onUnavailable() = main.post {
                 diagnostic("wifi_unavailable generation=$token current=${active && token == generation}")
                 if (active && token == generation) fail("network_unavailable",
-                    "Wi-Fi connection was declined or could not complete. Open Wi-Fi settings, join REHAB-WEARABLE, then retry.")
+                    "Wi-Fi connection was declined or could not complete. Open Wi-Fi settings, join REHAB, then retry.")
             }.let { Unit }
             override fun onLost(network: Network) = main.post {
                 diagnostic("wifi_lost network=$network generation=$token selected=${selectedNetwork == network}")
@@ -422,7 +422,7 @@ class WearableConnection(private val activity: Activity, private val event: (Str
         const val PERMISSION_REQUEST = 6401
 
         internal fun findWearableNetwork(candidates: List<Pair<Network, String?>>): Network? =
-            candidates.firstOrNull { (_, ssid) -> ssid == "REHAB-WEARABLE" || ssid == "\"REHAB-WEARABLE\"" }?.first
+            candidates.firstOrNull { (_, ssid) -> ssid == "REHAB" || ssid == "\"REHAB\"" }?.first
 
         internal fun restoreHeelZero(session: PyObject, json: PyObject, zero: Map<*, *>) {
             val validated = AppSettingsPayload.validateHeelZero(zero)

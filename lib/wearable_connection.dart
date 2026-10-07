@@ -367,7 +367,7 @@ class WearableConnection extends ChangeNotifier {
     _commandError = null;
     await _subscription?.cancel();
     if (_disposed || generation != _generation) return;
-    _setStatus(WearableStatus.connecting, 'Connecting to REHAB-WEARABLE…');
+    _setStatus(WearableStatus.connecting, 'Connecting to REHAB…');
     _subscription = events.receiveBroadcastStream().listen(
       (event) {
         if (!_disposed && generation == _generation) _handleEvent(event);
@@ -515,7 +515,7 @@ class WearableConnection extends ChangeNotifier {
     WearableStatus.reconnecting => 'Readings stopped. Reconnecting…',
     WearableStatus.disconnected =>
       'Wearable disconnected. Connect to try again.',
-    WearableStatus.connecting => 'Connecting to REHAB-WEARABLE…',
+    WearableStatus.connecting => 'Connecting to REHAB…',
     WearableStatus.live => 'Receiving live sensor readings',
     _ => 'Check the wearable connection and retry.',
   };
@@ -588,7 +588,7 @@ class WearableConnection extends ChangeNotifier {
       if (_disposed || generation != _generation) return;
       _setStatus(
         WearableStatus.error,
-        'Open Wi-Fi settings on your phone and join REHAB-WEARABLE.',
+        'Open Wi-Fi settings on your phone and join REHAB.',
       );
     } on MissingPluginException {
       if (_disposed || generation != _generation) return;

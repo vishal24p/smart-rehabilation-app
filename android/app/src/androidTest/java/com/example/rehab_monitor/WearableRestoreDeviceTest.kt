@@ -203,8 +203,8 @@ class WearableRecoveryDeviceTest : ActivityInstrumentationTestCase2<MainActivity
         val wearable = Network.CREATOR.createFromParcel(parcel)
         parcel.recycle()
         assertEquals(wearable, WearableConnection.findWearableNetwork(listOf(
-            unrelated to "Other Wi-Fi", wearable to "\"REHAB-WEARABLE\"")))
-        assertEquals(wearable, WearableConnection.findWearableNetwork(listOf(wearable to "REHAB-WEARABLE")))
+            unrelated to "Other Wi-Fi", wearable to "\"REHAB\"")))
+        assertEquals(wearable, WearableConnection.findWearableNetwork(listOf(wearable to "REHAB")))
         assertNull(WearableConnection.findWearableNetwork(listOf(
             unrelated to "Other Wi-Fi", wearable to "<unknown ssid>")))
         assertNull(WearableConnection.findWearableNetwork(listOf(wearable to null)))
